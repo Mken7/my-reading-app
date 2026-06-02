@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+:root {
+  --paper: #f3efe6;
+  --paper-edge: #e8e2d6;
+  --ink: #2c2825;
+  --ink-muted: #6b6560;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-ink: var(--ink);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* 划线统一用 SVG 底纹，避免 text-decoration 与 background 互相覆盖 */
+
+/* 埃里克：蓝色实线 */
+.highlight-eric {
+  text-decoration: none !important;
+  background-color: transparent !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='3' viewBox='0 0 12 3'%3E%3Cline x1='0' y1='2.2' x2='12' y2='2.2' stroke='%232563eb' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: repeat-x;
+  background-position: 0 100%;
+  background-size: 12px 3px;
+  padding-bottom: 5px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* 珍：红色波浪线 */
+.highlight-jen {
+  text-decoration: none !important;
+  background-color: transparent !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='4' viewBox='0 0 14 4'%3E%3Cpath d='M0 3.1 Q3.5 0.4 7 3.1 T14 3.1' fill='none' stroke='%23dc2626' stroke-width='1.35' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: repeat-x;
+  background-position: 0 100%;
+  background-size: 14px 4px;
+  padding-bottom: 5px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* 重叠：上层蓝实线 + 下层红波浪，两层 background 并存 */
+.highlight-eric.highlight-jen {
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='3' viewBox='0 0 12 3'%3E%3Cline x1='0' y1='2.2' x2='12' y2='2.2' stroke='%232563eb' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='4' viewBox='0 0 14 4'%3E%3Cpath d='M0 3.1 Q3.5 0.4 7 3.1 T14 3.1' fill='none' stroke='%23dc2626' stroke-width='1.35' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: repeat-x, repeat-x;
+  background-position: 0 calc(100% - 5px), 0 100%;
+  background-size: 12px 3px, 14px 4px;
+  padding-bottom: 10px;
+}
+
+.book-content ::selection {
+  background: rgba(37, 99, 235, 0.12);
+  color: inherit;
+}
