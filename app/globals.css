@@ -65,7 +65,26 @@ body {
   padding-bottom: 10px;
 }
 
+.book-content,
+.book-content * {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  touch-action: auto;
+}
+
+.book-content {
+  cursor: text;
+  width: 100%;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .book-content ::selection {
-  background: rgba(37, 99, 235, 0.12);
+  background: rgba(37, 99, 235, 0.35);
   color: inherit;
+}
+
+.book-scroll {
+  -webkit-overflow-scrolling: touch;
 }
