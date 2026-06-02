@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "cross-env NEXT_PUBLIC_SUPABASE_URL=https://warhfmpfnlgzofbeuikb.supabase.co NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_bkB8f5a9ENfPI7ZWHpvhxQ_uM5YAhZg next build",
     "start": "next start",
     "lint": "eslint"
   },
@@ -19,6 +19,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "cross-env": "^10.1.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "tailwindcss": "^4",
