@@ -7,7 +7,6 @@ type Props = {
   onHighlightClick?: (e: React.MouseEvent, highlightId: string) => void;
 };
 
-// --- 新增：智能亮度检测函数 ---
 function getLuminance(hex: string) {
   if (!hex || !hex.startsWith('#')) return 0;
   const r = parseInt(hex.slice(1, 3), 16);
@@ -23,35 +22,28 @@ export function renderHighlightedText(
 ): ReactNode {
   if (activeHighlights.length === 0) return text;
 
-  return activeHighlights.reduceRight<ReactNode>((child, h, index) => {
+  return activeHighlights.reduceRight<ReactNode>((child, h) => {
     const color = h.userColor;
-    
-    // 判断颜色是否过浅
-    const isLightColor = getLuminance(color) > 0.75;
+    const isLight = getLuminance(color) > 0.75;
 
-    let borderStyle: string;
+    let decoration: string;
     switch (h.lineStyle) {
-      case "solid":
-        borderStyle = "solid";
-        break;
-      case "dashed":
-        borderStyle = "dashed";
-        break;
-      default:
-        borderStyle = "wavy";
+      case "solid": decoration = "underline"; break;
+      case "dashed": decoration = "underline dashed"; break;
+      default: decoration = "underline wavy";
     }
 
     return (
       <span
         key={h.id}
-        className="select-text"
         data-highlight-id={h.id}
         style={{
-          borderBottom: `2px ${borderStyle} ${color}`,
-          paddingBottom: "1px",
-          background: "transparent",
-          // --- 新增：如果颜色太浅，加上极细的深色阴影增强辨识度 ---
-          textShadow: isLightColor ? "0px 0px 1px rgba(0,0,0,0.4)" : "none",
+          textDecoration: decoration,
+          textUnderlineOffset: "3px",
+          textDecorationColor: color,
+          textDecorationThickness: "2px",
+          background: isLight ? "rgba(0,0,0,0.06)" : "transparent",
+          cursor: "pointer",
         }}
         onClick={(e) => onHighlightClick?.(e, h.id)}
       >

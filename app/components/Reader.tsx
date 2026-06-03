@@ -80,17 +80,15 @@ export function Reader({
     [bookText, highlights],
   );
 
-  // 手机端：点击高亮弹出便签
   const [mobileNotePopover, setMobileNotePopover] = useState<{
     note: Note;
     anchorEl: HTMLElement;
   } | null>(null);
 
-  // --- 新增：阅读进度与页码状态 ---
   const [readProgress, setReadProgress] = useState(0);
   const [pageInfo, setPageInfo] = useState({ current: 1, total: 1 });
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  // --- 新增：滚动进度计算逻辑 ---
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
     let progress = 0;
@@ -98,13 +96,11 @@ export function Reader({
     let total = 1;
 
     if (viewMode === "page") {
-      // 翻页模式计算 (水平)
       const maxScroll = target.scrollWidth - target.clientWidth;
       progress = maxScroll > 0 ? (target.scrollLeft / maxScroll) * 100 : 0;
       total = Math.max(1, Math.ceil(target.scrollWidth / target.clientWidth));
       current = Math.min(Math.floor(target.scrollLeft / target.clientWidth) + 1, total);
     } else {
-      // 滚动模式计算 (垂直)
       const maxScroll = target.scrollHeight - target.clientHeight;
       progress = maxScroll > 0 ? (target.scrollTop / maxScroll) * 100 : 0;
       total = Math.max(1, Math.ceil(target.scrollHeight / target.clientHeight));
@@ -117,7 +113,6 @@ export function Reader({
 
   const handleHighlightClick = useCallback(
     (e: React.MouseEvent, noteId: string) => {
-      // 只在手机端触发
       if (window.innerWidth >= 1024) return;
       const note = notes.find((n) => n.id === noteId);
       if (!note) return;
@@ -154,20 +149,18 @@ export function Reader({
     setCardTops(stackCardTops(anchors, heights, GAP_BETWEEN_CARDS));
   }, [notes, bookRef, notesColumnRef, markRefs, cardRefs, setCardTops]);
 
-  // 手机端：点击高亮弹出便签（通过 data 属性委托）
+  // 手机端 touch 委托
   useEffect(() => {
     const bookEl = bookRef.current;
     if (!bookEl) return;
 
     const onTouchEnd = (e: TouchEvent) => {
-      // 等 click 事件处理完再检查
       setTimeout(() => {
         const target = e.target as HTMLElement;
         const highlightSpan = target.closest("[data-highlight-id]") as HTMLElement | null;
         if (!highlightSpan) return;
         const highlightId = highlightSpan.dataset.highlightId;
         if (!highlightId) return;
-        // 模拟 click 事件
         const mockEvent = { currentTarget: highlightSpan } as unknown as React.MouseEvent;
         handleHighlightClick(mockEvent, highlightId);
       }, 50);
@@ -195,42 +188,28 @@ export function Reader({
     return () => ro.disconnect();
   }, [relayoutCards, notes, bookRef, notesColumnRef, cardRefs, setNotesMinHeight]);
 
+  // 点击菜单外关闭
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = () => setMenuOpen(false);
+    window.addEventListener("touchstart", onDown, { passive: true });
+    window.addEventListener("mousedown", onDown);
+    return () => {
+      window.removeEventListener("touchstart", onDown);
+      window.removeEventListener("mousedown", onDown);
+    };
+  }, [menuOpen]);
+
+  const progressText = viewMode === "page"
+    ? `${pageInfo.current} / ${pageInfo.total} 页`
+    : `阅读进度 · ${readProgress}%`;
+
   return (
     <>
-      {/* 顶部工具栏 */}
-      <div className={`pointer-events-none fixed right-4 top-4 z-[55] sm:right-6 sm:top-6`}>
-        <div className="pointer-events-auto flex flex-col items-end gap-2">
+      {/* 在线用户 - 独立显示在右上 */}
+      <div className="fixed right-4 top-4 z-[55] pointer-events-none">
+        <div className="pointer-events-auto">
           {onlineUsers.length > 0 && <OnlineUsers users={onlineUsers} />}
-
-          <div className="rounded-2xl border border-[#e0d9cc] bg-white/90 px-4 py-3 shadow-lg backdrop-blur-md">
-            <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-[#9a9288]">
-              房间邀请码
-            </p>
-            <p className="mt-1 font-mono text-2xl font-semibold tracking-[0.25em] text-[#2c2825]">
-              {roomJoinCode || "------"}
-            </p>
-            <button
-              type="button"
-              onClick={onCopyJoinCode}
-              className="mt-2 w-full rounded-lg bg-[#2c2825] px-3 py-1.5 text-xs text-white"
-            >
-              {codeCopied ? "已复制" : "复制邀请码"}
-            </button>
-          </div>
-          <button
-            type="button"
-            onClick={onToggleViewMode}
-            className="rounded-full border border-[#e0d9cc] bg-white/90 px-3 py-1.5 text-xs font-medium text-[#2c2825] shadow-sm hover:bg-white backdrop-blur-md"
-          >
-            {viewMode === "scroll" ? "切换为: 翻页模式" : "切换为: 滚动模式"}
-          </button>
-          <button
-            type="button"
-            onClick={onLeaveRoom}
-            className="rounded-full border border-[#e0d9cc] bg-white/80 px-3 py-1.5 text-xs text-[#6b6560] shadow-sm hover:bg-white"
-          >
-            返回大厅
-          </button>
         </div>
       </div>
 
@@ -239,7 +218,7 @@ export function Reader({
         className="book-scroll h-full overflow-y-auto overflow-x-hidden"
         onScroll={viewMode === "scroll" ? handleScroll : undefined}
       >
-        <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col px-4 pb-10 pt-24 sm:px-6 lg:flex-row lg:gap-0 lg:px-10">
+        <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col px-4 pb-24 pt-24 sm:px-6 lg:flex-row lg:gap-0 lg:px-10">
           {/* 书籍正文 */}
           <section className="min-w-0 w-full flex-1 lg:flex-[1.65] lg:pr-12">
             <header className="mb-10 border-b border-[#ddd5c8]/80 pb-6">
@@ -367,13 +346,78 @@ export function Reader({
         />
       )}
 
-      {/* --- 新增：苹果风底部悬浮进度条 --- */}
-      <div className="fixed bottom-6 left-1/2 z-[80] -translate-x-1/2 pointer-events-none transition-all duration-300">
-        <div className="rounded-full border border-white/60 bg-[#f9f9f9]/85 px-4 py-1.5 text-[13px] font-medium tracking-wide text-[#8a8278] shadow-lg backdrop-blur-xl">
-          {viewMode === "page" 
-            ? `${pageInfo.current} / ${pageInfo.total} 页` 
-            : `阅读进度 · ${readProgress}%`}
-        </div>
+      {/* === 苹果风格悬浮菜单 === */}
+      <div className="fixed bottom-6 left-1/2 z-[90] -translate-x-1/2">
+        {/* 展开的菜单面板 */}
+        {menuOpen && (
+          <div
+            className="mb-3 rounded-2xl border border-[#e0d9cc]/60 bg-white/95 shadow-xl backdrop-blur-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 进度 */}
+            <div className="border-b border-[#e0d9cc]/40 px-5 py-3 text-center">
+              <p className="text-[13px] font-medium text-[#2c2825]">{progressText}</p>
+              <div className="mt-1.5 h-1 w-full rounded-full bg-[#e8e2d6]">
+                <div
+                  className="h-full rounded-full bg-[#2c2825] transition-all duration-300"
+                  style={{ width: `${Math.min(100, readProgress)}%` }}
+                />
+              </div>
+            </div>
+
+            {/* 邀请码 */}
+            <div className="border-b border-[#e0d9cc]/40 px-5 py-3">
+              <p className="text-[9px] font-medium uppercase tracking-[0.15em] text-[#9a9288]">
+                邀请码
+              </p>
+              <div className="mt-1 flex items-center gap-2">
+                <span className="font-mono text-lg font-semibold tracking-[0.2em] text-[#2c2825]">
+                  {roomJoinCode || "------"}
+                </span>
+                <button
+                  type="button"
+                  onClick={onCopyJoinCode}
+                  className="rounded-lg bg-[#2c2825] px-2.5 py-1 text-[11px] text-white"
+                >
+                  {codeCopied ? "已复制" : "复制"}
+                </button>
+              </div>
+            </div>
+
+            {/* 功能按钮 */}
+            <div className="flex items-center gap-1 px-2 py-2">
+              <button
+                type="button"
+                onClick={onToggleViewMode}
+                className="flex-1 rounded-xl px-3 py-2 text-[12px] font-medium text-[#2c2825] hover:bg-[#e8e2d6]/60 transition-colors"
+              >
+                {viewMode === "scroll" ? "📖 翻页" : "📜 滚动"}
+              </button>
+              <button
+                type="button"
+                onClick={onLeaveRoom}
+                className="flex-1 rounded-xl px-3 py-2 text-[12px] font-medium text-[#6b6560] hover:bg-[#e8e2d6]/60 transition-colors"
+              >
+                🚪 退出
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 悬浮按钮 */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setMenuOpen((v) => !v);
+          }}
+          className="flex items-center gap-2 rounded-full border border-[#e0d9cc]/60 bg-white/95 px-5 py-2.5 shadow-lg backdrop-blur-xl hover:bg-white active:scale-95 transition-all"
+        >
+          <span className="text-sm font-medium text-[#2c2825]">
+            {menuOpen ? "✕" : "⋯"}
+          </span>
+          <span className="text-[11px] text-[#8a8278]">{progressText}</span>
+        </button>
       </div>
     </>
   );
