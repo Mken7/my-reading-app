@@ -154,6 +154,29 @@ export function Reader({
     setCardTops(stackCardTops(anchors, heights, GAP_BETWEEN_CARDS));
   }, [notes, bookRef, notesColumnRef, markRefs, cardRefs, setCardTops]);
 
+  // 手机端：点击高亮弹出便签（通过 data 属性委托）
+  useEffect(() => {
+    const bookEl = bookRef.current;
+    if (!bookEl) return;
+
+    const onTouchEnd = (e: TouchEvent) => {
+      // 等 click 事件处理完再检查
+      setTimeout(() => {
+        const target = e.target as HTMLElement;
+        const highlightSpan = target.closest("[data-highlight-id]") as HTMLElement | null;
+        if (!highlightSpan) return;
+        const highlightId = highlightSpan.dataset.highlightId;
+        if (!highlightId) return;
+        // 模拟 click 事件
+        const mockEvent = { currentTarget: highlightSpan } as unknown as React.MouseEvent;
+        handleHighlightClick(mockEvent, highlightId);
+      }, 50);
+    };
+
+    bookEl.addEventListener("touchend", onTouchEnd, { passive: true });
+    return () => bookEl.removeEventListener("touchend", onTouchEnd);
+  }, [bookRef, handleHighlightClick]);
+
   useEffect(() => {
     relayoutCards();
   }, [relayoutCards, bookText, highlights, textRuns, notes]);

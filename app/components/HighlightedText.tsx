@@ -45,6 +45,7 @@ export function renderHighlightedText(
       <span
         key={h.id}
         className="select-text"
+        data-highlight-id={h.id}
         style={{
           borderBottom: `2px ${borderStyle} ${color}`,
           paddingBottom: "1px",
