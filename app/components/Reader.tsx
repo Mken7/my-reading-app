@@ -11,6 +11,8 @@ import { MobileNotePopover } from "./MobileNotePopover";
 import { GAP_BETWEEN_CARDS, stackCardTops } from "./utils";
 
 type Props = {
+  viewMode: "scroll" | "page";
+  onToggleViewMode: () => void;
   profile: UserProfile;
   roomPen: RoomPen;
   bookTitle: string;
@@ -42,6 +44,8 @@ type Props = {
 };
 
 export function Reader({
+  viewMode,
+  onToggleViewMode,
   profile,
   roomPen,
   bookTitle,
@@ -82,6 +86,35 @@ export function Reader({
     anchorEl: HTMLElement;
   } | null>(null);
 
+  // --- 新增：阅读进度与页码状态 ---
+  const [readProgress, setReadProgress] = useState(0);
+  const [pageInfo, setPageInfo] = useState({ current: 1, total: 1 });
+
+  // --- 新增：滚动进度计算逻辑 ---
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.currentTarget;
+    let progress = 0;
+    let current = 1;
+    let total = 1;
+
+    if (viewMode === "page") {
+      // 翻页模式计算 (水平)
+      const maxScroll = target.scrollWidth - target.clientWidth;
+      progress = maxScroll > 0 ? (target.scrollLeft / maxScroll) * 100 : 0;
+      total = Math.max(1, Math.ceil(target.scrollWidth / target.clientWidth));
+      current = Math.min(Math.floor(target.scrollLeft / target.clientWidth) + 1, total);
+    } else {
+      // 滚动模式计算 (垂直)
+      const maxScroll = target.scrollHeight - target.clientHeight;
+      progress = maxScroll > 0 ? (target.scrollTop / maxScroll) * 100 : 0;
+      total = Math.max(1, Math.ceil(target.scrollHeight / target.clientHeight));
+      current = Math.min(Math.floor(target.scrollTop / target.clientHeight) + 1, total);
+    }
+
+    setReadProgress(Math.max(0, Math.min(100, Math.round(progress))));
+    setPageInfo({ current, total });
+  }, [viewMode]);
+
   const handleHighlightClick = useCallback(
     (e: React.MouseEvent, noteId: string) => {
       // 只在手机端触发
@@ -93,7 +126,7 @@ export function Reader({
       e.stopPropagation();
       setMobileNotePopover({ note, anchorEl: el });
     },
-    [notes],
+    [notes, markRefs],
   );
 
   const relayoutCards = useCallback(() => {
@@ -163,6 +196,13 @@ export function Reader({
           </div>
           <button
             type="button"
+            onClick={onToggleViewMode}
+            className="rounded-full border border-[#e0d9cc] bg-white/90 px-3 py-1.5 text-xs font-medium text-[#2c2825] shadow-sm hover:bg-white backdrop-blur-md"
+          >
+            {viewMode === "scroll" ? "切换为: 翻页模式" : "切换为: 滚动模式"}
+          </button>
+          <button
+            type="button"
             onClick={onLeaveRoom}
             className="rounded-full border border-[#e0d9cc] bg-white/80 px-3 py-1.5 text-xs text-[#6b6560] shadow-sm hover:bg-white"
           >
@@ -174,6 +214,7 @@ export function Reader({
       <div
         ref={scrollRef}
         className="book-scroll h-full overflow-y-auto overflow-x-hidden"
+        onScroll={viewMode === "scroll" ? handleScroll : undefined}
       >
         <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col px-4 pb-10 pt-24 sm:px-6 lg:flex-row lg:gap-0 lg:px-10">
           {/* 书籍正文 */}
@@ -183,7 +224,7 @@ export function Reader({
                 S. · 共读房间
               </p>
               <h1 className="mt-2 font-serif text-3xl text-[#2c2825] sm:text-4xl">
-                {bookLoading ? "加载중…" : bookTitle}
+                {bookLoading ? "加载中…" : bookTitle}
               </h1>
               {roomPen && (
                 <p className="mt-2 text-xs text-[#6b6560]">
@@ -202,9 +243,10 @@ export function Reader({
 
             <div
               ref={bookRef}
-              className="book-content w-full max-w-full break-words whitespace-pre-wrap font-serif text-[17px] leading-[1.85] text-[#2c2825] select-text"
+              className={`book-content w-full max-w-full break-words whitespace-pre-wrap font-serif text-[17px] leading-[1.85] text-[#2c2825] select-text transition-all duration-300 ${viewMode === "page" ? "page-snap-container" : ""}`}
               style={{ WebkitTouchCallout: "none" }}
               onMouseUp={onMouseUp}
+              onScroll={viewMode === "page" ? handleScroll : undefined}
             >
               {bookLoading ? (
                 <p className="text-sm text-[#9a9288]">正在加载正文…</p>
@@ -301,6 +343,15 @@ export function Reader({
           onDeleteReply={onDeleteReply}
         />
       )}
+
+      {/* --- 新增：苹果风底部悬浮进度条 --- */}
+      <div className="fixed bottom-6 left-1/2 z-[80] -translate-x-1/2 pointer-events-none transition-all duration-300">
+        <div className="rounded-full border border-white/60 bg-[#f9f9f9]/85 px-4 py-1.5 text-[13px] font-medium tracking-wide text-[#8a8278] shadow-lg backdrop-blur-xl">
+          {viewMode === "page" 
+            ? `${pageInfo.current} / ${pageInfo.total} 页` 
+            : `阅读进度 · ${readProgress}%`}
+        </div>
+      </div>
     </>
   );
 }

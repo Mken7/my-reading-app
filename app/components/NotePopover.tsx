@@ -24,7 +24,7 @@ export function NotePopover({
 
   return (
     <>
-      {/* 背景遮罩 */}
+      {/* 背景遮罩：让后面的文字稍微变暗，突出悬浮窗 */}
       <div
         className="fixed inset-0 z-[90] bg-black/10 sm:bg-transparent transition-colors"
         aria-hidden
@@ -32,9 +32,9 @@ export function NotePopover({
         onTouchStart={onClose}
       />
 
-      {/* 弹窗 */}
+      {/* 弹窗核心：加入了苹果风的悬浮与毛玻璃属性 */}
       <div
-        className="fixed z-[100] flex w-full flex-col bottom-0 left-0 rounded-t-3xl border-t border-[#e0d9cc] bg-white/95 p-5 shadow-[0_-10px_40px_rgba(0,0,0,0.12)] backdrop-blur-lg transition-all sm:w-[24rem] sm:bottom-auto sm:left-auto sm:-translate-x-1/2 sm:-translate-y-full sm:rounded-2xl sm:border sm:p-4 sm:shadow-xl"
+        className="fixed z-[100] flex flex-col bottom-6 left-4 right-4 rounded-[2rem] bg-[#f9f9f9]/85 p-5 shadow-2xl backdrop-blur-xl border border-white/60 transition-all sm:w-[24rem] sm:bottom-auto sm:left-auto sm:right-auto sm:-translate-x-1/2 sm:-translate-y-full sm:rounded-2xl sm:border-[#e0d9cc] sm:bg-white/95 sm:p-4 sm:shadow-xl"
         style={
           isMobile
             ? {}
@@ -43,30 +43,30 @@ export function NotePopover({
         onMouseDown={(e) => e.stopPropagation()}
         onTouchStart={(e) => e.stopPropagation()}
       >
-        {/* 手机端拉手 */}
-        <div className="mx-auto mb-4 h-1 w-12 rounded-full bg-[#e0d9cc] sm:hidden" />
-
-        <p className="mb-4 line-clamp-3 border-l-2 border-[#e0d9cc] pl-3 text-sm leading-relaxed text-[#9a9288]">
+        {/* 引用的原文：更细腻的文字颜色和边距 */}
+        <p className="mb-4 line-clamp-3 border-l-[3px] border-black/10 pl-3 text-[14px] leading-relaxed text-[#8a8278]">
           「{popover.text}」
         </p>
 
+        {/* 输入框：苹果 iOS 原生风格的无边框浅灰内嵌输入框 */}
         <textarea
           autoFocus
           rows={3}
           value={draft}
           onChange={(e) => onDraftChange(e.target.value)}
-          placeholder="写下边缘笔记…"
-          className="w-full resize-none rounded-xl border border-[#e8e2d6] bg-[#faf8f4] px-4 py-3 text-sm outline-none transition-colors focus:border-[#2c2825]/30 focus:bg-white"
+          placeholder="写下你的时空笔记…"
+          className="w-full resize-none rounded-2xl bg-black/5 px-4 py-3.5 text-[15px] text-[#2c2825] outline-none transition-colors focus:bg-black/10 placeholder:text-black/30"
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) onSubmit();
           }}
         />
 
-        <div className="mt-4 flex justify-end gap-3 pb-safe sm:pb-0">
+        {/* 底部按钮：全圆角胶囊样式 */}
+        <div className="mt-4 flex justify-end gap-2 pb-safe sm:pb-0">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-xl px-4 py-2 text-sm font-medium text-[#6b6560] transition-colors hover:bg-[#faf8f4]"
+            className="rounded-full px-5 py-2.5 text-sm font-medium text-[#6b6560] transition-colors hover:bg-black/5 active:bg-black/10"
           >
             取消
           </button>
@@ -74,9 +74,9 @@ export function NotePopover({
             type="button"
             onClick={onSubmit}
             disabled={!draft.trim() || submitting}
-            className="rounded-xl bg-[#2c2825] px-6 py-2 text-sm font-medium text-white transition-colors disabled:opacity-40"
+            className="rounded-full bg-[#2c2825] px-6 py-2.5 text-sm font-medium text-white transition-all active:scale-95 disabled:opacity-40"
           >
-            {submitting ? "保存中…" : "提交"}
+            {submitting ? "保存中…" : "提交笔记"}
           </button>
         </div>
       </div>

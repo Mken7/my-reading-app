@@ -1,13 +1,13 @@
 @import "tailwindcss";
 
 :root {
-  --paper: #f3efe6;
-  --paper-edge: #e8e2d6;
-  --ink: #2c2825;
-  --ink-muted: #6b6560;
-}
+  /* 原有纸张与墨水基础变量 */
+  --paper: #f3efe6;               /* 浅米色背景 */
+  --paper-edge: #e8e2d6;          /* 纸张边缘色 */
+  --ink: #2c2825;                 /* 主体墨色文本 */
+  --ink-muted: #6b6560;           /* 弱化文本色 */
 
-@theme inline {
+  /* ✨ 映射到 Tailwind 主题变量系统（用传统语法替代 @theme inline） */
   --color-paper: var(--paper);
   --color-ink: var(--ink);
   --font-sans: var(--font-geist-sans);
@@ -87,4 +87,27 @@ body {
 
 .book-scroll {
   -webkit-overflow-scrolling: touch;
+}
+/* 翻页模式核心样式 */
+.page-snap-container {
+  column-width: calc(100vw - 2rem);
+  column-gap: 2rem;
+  height: calc(100vh - 200px); 
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  scrollbar-width: none; 
+}
+.page-snap-container::-webkit-scrollbar {
+  display: none;
+}
+.page-snap-container > span {
+  scroll-snap-align: start;
+}
+@media (min-width: 1024px) {
+  .page-snap-container {
+    column-width: calc(100% - 4rem); 
+    height: calc(100vh - 160px);
+  }
 }

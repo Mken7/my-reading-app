@@ -97,6 +97,7 @@ function ReadingApp() {
   const [submitting, setSubmitting] = useState(false);
   const [importing, setImporting] = useState(false);
 
+  const [viewMode, setViewMode] = useState<"scroll" | "page">("scroll");
   const [restoredScroll, setRestoredScroll] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
   const [toast, setToast] = useState<ToastState>({
@@ -997,6 +998,8 @@ function ReadingApp() {
 
       {showReader && (
         <Reader
+          viewMode={viewMode}
+          onToggleViewMode={() => setViewMode((v) => (v === "scroll" ? "page" : "scroll"))}
           profile={profile}
           roomPen={roomPen}
           bookTitle={bookTitle}

@@ -7,6 +7,15 @@ type Props = {
   onHighlightClick?: (e: React.MouseEvent, highlightId: string) => void;
 };
 
+// --- 新增：智能亮度检测函数 ---
+function getLuminance(hex: string) {
+  if (!hex || !hex.startsWith('#')) return 0;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+}
+
 export function renderHighlightedText(
   text: string,
   activeHighlights: Highlight[],
@@ -16,8 +25,10 @@ export function renderHighlightedText(
 
   return activeHighlights.reduceRight<ReactNode>((child, h, index) => {
     const color = h.userColor;
+    
+    // 判断颜色是否过浅
+    const isLightColor = getLuminance(color) > 0.75;
 
-    // 使用 borderBottom 模拟下划线，兼容性更好（尤其手机端）
     let borderStyle: string;
     switch (h.lineStyle) {
       case "solid":
@@ -38,6 +49,8 @@ export function renderHighlightedText(
           borderBottom: `2px ${borderStyle} ${color}`,
           paddingBottom: "1px",
           background: "transparent",
+          // --- 新增：如果颜色太浅，加上极细的深色阴影增强辨识度 ---
+          textShadow: isLightColor ? "0px 0px 1px rgba(0,0,0,0.4)" : "none",
         }}
         onClick={(e) => onHighlightClick?.(e, h.id)}
       >
