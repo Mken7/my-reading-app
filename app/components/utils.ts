@@ -133,6 +133,7 @@ export function mapRowsToState(
       userColor,
       lineStyle,
       content: row.content,
+      quote,
       createdAt: new Date(row.created_at).getTime(),
       replies: parseReplies(row.replies),
     });

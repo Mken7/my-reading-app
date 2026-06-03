@@ -165,7 +165,7 @@ export function MobileNotePopover({
 
         {/* 引用文本 */}
         <p className="border-l-2 border-[#e0d9cc] mx-3 mt-2 pl-2 text-[10px] leading-relaxed text-[#9a9288] line-clamp-2">
-          「{note.content.length > 60 ? note.content.slice(0, 60) + "…" : note.content}」
+          「{note.quote.length > 60 ? note.quote.slice(0, 60) + "…" : note.quote}」
         </p>
 
         {/* 笔记内容 */}

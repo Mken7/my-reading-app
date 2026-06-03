@@ -37,6 +37,7 @@ export type Note = {
   userColor: string;
   lineStyle: LineStyle;
   content: string;
+  quote: string;
   createdAt: number;
   replies: DbNoteReply[];
 };
