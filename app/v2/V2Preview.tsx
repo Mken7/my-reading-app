@@ -335,7 +335,7 @@ export function V2Preview() {
                     ))}
                   </div>
                 )}
-                <V2ProtectedBook key={`${session.user.id}:${room.id}`} client={client} roomId={room.id} owner={isOwner} />
+                <V2ProtectedBook key={`${session.user.id}:${room.id}`} client={client} roomId={room.id} owner={isOwner} userId={session.user.id} />
               </article>
             );
           })}
