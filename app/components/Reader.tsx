@@ -123,32 +123,6 @@ export function Reader({
     [notes, markRefs],
   );
 
-  // Card measurement must keep the exact hook dependencies stable.
-  const relayoutCards = useCallback(() => {
-    const column = notesColumnRef.current;
-    const book = bookRef.current;
-    if (!column || !book) return;
-
-    const columnRect = column.getBoundingClientRect();
-
-    const anchors = notes.map((note) => {
-      const span = markRefs.current?.get(note.highlightId);
-      let anchorY = 0;
-      if (span) {
-        const r = span.getBoundingClientRect();
-        anchorY = r.top - columnRect.top;
-      }
-      return { id: note.id, anchorY };
-    });
-
-    const heights: Record<string, number> = {};
-    cardRefs.current?.forEach((el, id) => {
-      heights[id] = el.getBoundingClientRect().height;
-    });
-
-    setCardTops(stackCardTops(anchors, heights, GAP_BETWEEN_CARDS));
-  }, [notes, bookRef, notesColumnRef, markRefs, cardRefs, cardRefs.current, setCardTops]);
-
   // 手机端 touch 委托
   useEffect(() => {
     const bookEl = bookRef.current;
@@ -170,23 +144,52 @@ export function Reader({
     return () => bookEl.removeEventListener("touchend", onTouchEnd);
   }, [bookRef, handleHighlightClick]);
 
+  // Measure cards together with ResizeObserver rather than memoizing mutable
+  // ref.current values during render. Batch layout reads into animation frames.
   useEffect(() => {
-    relayoutCards();
-  }, [relayoutCards, bookText, highlights, textRuns, notes]);
+    let frame: number | null = null;
 
-  useEffect(() => {
-    const ro = new ResizeObserver(() => {
-      if (bookRef.current) {
-        setNotesMinHeight(bookRef.current.offsetHeight);
-      }
-      relayoutCards();
-    });
-    if (bookRef.current) ro.observe(bookRef.current);
-    if (notesColumnRef.current) ro.observe(notesColumnRef.current);
-    cardRefs.current?.forEach((el) => ro.observe(el));
+    const measure = () => {
+      frame = null;
+      const column = notesColumnRef.current;
+      const book = bookRef.current;
+      if (!column || !book) return;
 
-    return () => ro.disconnect();
-  }, [relayoutCards, notes, bookRef, notesColumnRef, cardRefs, setNotesMinHeight]);
+      const columnRect = column.getBoundingClientRect();
+      const anchors = notes.map((note) => {
+        const span = markRefs.current.get(note.highlightId);
+        const anchorY = span
+          ? span.getBoundingClientRect().top - columnRect.top
+          : 0;
+        return { id: note.id, anchorY };
+      });
+      const heights: Record<string, number> = {};
+      cardRefs.current.forEach((el, id) => {
+        heights[id] = el.getBoundingClientRect().height;
+      });
+      setCardTops(stackCardTops(anchors, heights, GAP_BETWEEN_CARDS));
+      setNotesMinHeight(book.offsetHeight);
+    };
+
+    const scheduleMeasure = () => {
+      if (frame === null) frame = window.requestAnimationFrame(measure);
+    };
+
+    const observer = new ResizeObserver(scheduleMeasure);
+    if (bookRef.current) observer.observe(bookRef.current);
+    if (notesColumnRef.current) observer.observe(notesColumnRef.current);
+    cardRefs.current.forEach((el) => observer.observe(el));
+    scheduleMeasure();
+
+    return () => {
+      observer.disconnect();
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [
+    notes, bookText, highlights, textRuns,
+    bookRef, notesColumnRef, markRefs, cardRefs,
+    setCardTops, setNotesMinHeight,
+  ]);
 
   // 点击菜单外关闭
   useEffect(() => {
