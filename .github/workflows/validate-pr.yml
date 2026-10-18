@@ -26,3 +26,31 @@ jobs:
           DEPLOY_TARGET: github-pages
       - name: Assert output was exported
         run: test -f out/index.html
+
+  database-security:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: access_policy_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d access_policy_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check isolated database security policies
+        run: |
+          psql -v ON_ERROR_STOP=1 -f tests/sql/reading_access_v2_smoke.sql
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: test-only-password
+          PGDATABASE: access_policy_test
