@@ -28,7 +28,8 @@ CREATE POLICY reading_note_replies_v2_select
 ON public.reading_note_replies_v2 FOR SELECT TO authenticated
 USING (EXISTS (
   SELECT 1 FROM public.reading_highlights_v2 h
-  WHERE h.room_id=room_id AND h.id=highlight_id
+  WHERE h.room_id=public.reading_note_replies_v2.room_id
+    AND h.id=public.reading_note_replies_v2.highlight_id
     AND (h.author_id=(SELECT auth.uid()) OR
          (h.visibility='shared' AND public.v2_is_room_member(h.room_id)))
 ));
@@ -38,7 +39,8 @@ WITH CHECK (
   author_id=(SELECT auth.uid()) AND public.v2_can_edit_room(room_id)
   AND EXISTS (
     SELECT 1 FROM public.reading_highlights_v2 h
-    WHERE h.room_id=room_id AND h.id=highlight_id
+    WHERE h.room_id=public.reading_note_replies_v2.room_id
+    AND h.id=public.reading_note_replies_v2.highlight_id
       AND (h.author_id=(SELECT auth.uid()) OR h.visibility='shared')
   )
 );
