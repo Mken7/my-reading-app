@@ -35,9 +35,10 @@ export function isValidInkShape(shape: Pick<InkShape,"kind" | "points">): boolea
   if (!["stroke","ellipse","arrow"].includes(shape.kind) ||
       shape.points.length < 2 || shape.points.length > MAX_INK_POINTS ||
       (shape.kind !== "stroke" && shape.points.length !== 2)) return false;
-  if (!shape.points.every(({x,y}) =>
-      Number.isInteger(x) && Number.isInteger(y) &&
-      x >= 0 && x <= 1000 && y >= 0 && y <= 1000)) return false;
+  if (!shape.points.every((point) =>
+      point !== null && typeof point === "object" &&
+      Number.isInteger(point.x) && Number.isInteger(point.y) &&
+      point.x >= 0 && point.x <= 1000 && point.y >= 0 && point.y <= 1000)) return false;
   const first = shape.points[0];
   return shape.points.some(point => point.x !== first.x || point.y !== first.y);
 }
