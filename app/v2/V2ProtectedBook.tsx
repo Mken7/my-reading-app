@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { V2TxtImporter } from "./V2TxtImporter";
 import { V2Annotations } from "./V2Annotations";
+import { V2GlassDock } from "./V2GlassDock";
 
 type ProtectedChunk = { chunk_index: number; body: string };
 type Chapter = { chapter_position: number; title: string; start_chunk: number };
@@ -45,6 +46,44 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [metaLoading, setMetaLoading] = useState(false);
+  const [activePanel, setActivePanel] = useState<"companion" | "settings" | null>(null);
+  const [annotationsShown, setAnnotationsShown] = useState(true);
+  const [fontSize, setFontSize] = useState(16);
+  const [lineHeight, setLineHeight] = useState(1.9);
+  const [readerTheme, setReaderTheme] = useState<"paper" | "white" | "mist">("paper");
+  const [memberRoles, setMemberRoles] = useState<string[]>([]);
+  const [memberError, setMemberError] = useState("");
+  const bookmarkRef = useRef<HTMLElement>(null);
+  const catalogRef = useRef<HTMLDetailsElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const textBackground = readerTheme === "paper" ? "#faf7f0" :
+    readerTheme === "white" ? "#ffffff" : "#e9eeef";
+
+  useEffect(() => {
+    if (!activePanel) return;
+    const frame = window.requestAnimationFrame(() => {
+      panelRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activePanel]);
+
+  useEffect(() => {
+    if (activePanel !== "companion") return;
+    let cancelled = false;
+    void client.from("reading_members_v2")
+      .select("role,left_at")
+      .eq("room_id", roomId)
+      .is("left_at", null).limit(2)
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        setMemberError(error ? "无法读取书房成员，请检查测试数据库权限。" : "");
+        setMemberRoles((data ?? []).map((r) => r.role).filter(
+          (role): role is string => typeof role === "string",
+        ));
+      });
+    return () => { cancelled = true; };
+  }, [activePanel, client, roomId]);
 
   const refreshMetadata = useCallback(async () => {
     setMetaLoading(true);
@@ -142,7 +181,7 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
   }
 
   return (
-    <section className="mt-4 rounded-lg border border-[#e0d9cc] bg-[#faf7f0] p-4">
+    <section className="mt-4 rounded-lg border border-[#e0d9cc] p-4" style={{ backgroundColor: textBackground }}>
       <h4 className="font-serif text-base">受保护的正文 · 测试</h4>
       <p className="mt-1 text-xs leading-5 text-[#817668]">
         每次按需读取一个不超过 3000 字的段落。服务端核对成员资格，
@@ -170,7 +209,7 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
       )}
       {owner && <V2TxtImporter client={client} roomId={roomId}
         onComplete={() => { void refreshMetadata(); }} />}
-      <section className="mt-4 rounded-lg border border-[#e2d9cb] bg-white/70 p-3">
+      <section ref={bookmarkRef} className="mt-4 rounded-lg border border-[#e2d9cb] bg-white/70 p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h5 className="text-sm font-medium">我的阅读书签</h5>
           <button type="button" className={buttonClass} disabled={metaLoading || working}
@@ -210,7 +249,7 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
             </div>
           </div>
         )}
-        <details className="mt-3">
+        <details ref={catalogRef} className="mt-3">
           <summary className="cursor-pointer text-sm">
             章节目录（展开可能显示后续章节名称）
           </summary>
