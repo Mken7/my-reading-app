@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildOverlappingRuns, type V2HighlightRange } from "@/lib/v2/overlap";
+import { V2InkOverlay } from "./V2InkOverlay";
 
 type HighlightRow = V2HighlightRange & {
   body: string;
@@ -128,6 +129,8 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
         <button type="button" className={buttonClass} disabled={working}
           onClick={() => { void refresh(); }}>刷新批注</button>
       </div>}
+      <V2InkOverlay client={client} roomId={roomId}
+        chunkIndex={chunkIndex} userId={userId} enabled={showAnnotations}>
       <div
         ref={textRef}
         className="select-text whitespace-pre-wrap break-words"
@@ -148,6 +151,7 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
           return <span className={mark} key={run.start}>{run.text}</span>;
         }) : body}
       </div>
+      </V2InkOverlay>
       {showAnnotations && selected && (
         <div className="mt-3 space-y-3 rounded-lg border border-[#d6c8b4] bg-[#f5efe4] p-3">
           <p className="text-xs">已选择：{selected.quote.slice(0,100)}</p>
