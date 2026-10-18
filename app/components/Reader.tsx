@@ -123,6 +123,7 @@ export function Reader({
     [notes, markRefs],
   );
 
+  // Card measurement must keep the exact hook dependencies stable.
   const relayoutCards = useCallback(() => {
     const column = notesColumnRef.current;
     const book = bookRef.current;
@@ -146,7 +147,7 @@ export function Reader({
     });
 
     setCardTops(stackCardTops(anchors, heights, GAP_BETWEEN_CARDS));
-  }, [notes, bookRef, notesColumnRef, markRefs, cardRefs, setCardTops]);
+  }, [notes, bookRef, notesColumnRef, markRefs, cardRefs, cardRefs.current, setCardTops]);
 
   // 手机端 touch 委托
   useEffect(() => {
