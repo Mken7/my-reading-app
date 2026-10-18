@@ -3,7 +3,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -35,13 +34,11 @@ import {
   rangesOverlap,
   parseReplies,
   titleFromFileName,
-  canRenameProfile,
 } from "./components/utils";
 import {
   loadUserProfile,
   saveUserProfile,
   loadMyBooks,
-  saveMyBooks,
   addToMyBooks,
   removeFromMyBooksStorage,
   saveActiveBookId,
@@ -681,13 +678,10 @@ function ReadingApp() {
         const state = presenceChannel.presenceState();
         const users: OnlineUser[] = [];
         for (const key in state) {
-          const presences = state[key] as any[];
-          if (presences && presences.length > 0) {
-            users.push({
-              userId: key,
-              name: presences[0].name,
-              color: presences[0].color,
-            });
+          const presences = state[key];
+          const first = presences?.[0];
+          if (first && typeof first.name === "string" && typeof first.color === "string") {
+            users.push({ userId: key, name: first.name, color: first.color });
           }
         }
         setOnlineUsers(users);
@@ -988,7 +982,6 @@ function ReadingApp() {
           importing={importing}
           joinError={joinError}
           onOpenRename={() => setShowRenameModal(true)}
-          onImportTxt={handleImportTxt}
           onJoinRoom={handleJoinRoom}
           onEnterBook={(bookId) => void beginEnterRoom(bookId)}
           onRemoveBook={handleRemoveFromBookshelf}
