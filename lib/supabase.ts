@@ -29,7 +29,6 @@ export type DbNoteReply = {
   user_id: string;
   user_name: string;
   user_color: string;
-  line_style?: LineStyle;
   content: string;
   created_at: string;
 };
@@ -42,6 +41,7 @@ export type DbNoteRow = {
   end_index: number;
   user_name: string;
   user_color: string;
+  line_style?: LineStyle;
   content: string;
   quote: string;
   replies: DbNoteReply[] | null;
