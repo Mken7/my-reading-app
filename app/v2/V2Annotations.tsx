@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildOverlappingRuns, type V2HighlightRange } from "@/lib/v2/overlap";
 import { V2InkOverlay } from "./V2InkOverlay";
+import { V2NoteReplies } from "./V2NoteReplies";
 
 type HighlightRow = V2HighlightRange & {
   body: string;
@@ -192,6 +193,8 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
                 第 {note.start_index + 1} 至 {note.end_index} 字
               </p>
               <p className="whitespace-pre-wrap break-words text-sm leading-6">{note.body}</p>
+              <V2NoteReplies client={client} roomId={roomId} noteId={note.id}
+                userId={userId} visibility={note.visibility} />
             </article>
           ))}
         </div>
