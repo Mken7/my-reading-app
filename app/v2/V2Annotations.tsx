@@ -16,6 +16,8 @@ type Props = {
   chunkIndex: number;
   body: string;
   userId: string;
+  fontSize?: number;
+  lineHeight?: number;
 };
 
 const buttonClass =
@@ -32,7 +34,7 @@ function validHighlight(value: unknown): value is HighlightRow {
 }
 
 /** All note positions are relative to one immutable, codepoint-indexed chunk. */
-export function V2Annotations({ client, roomId, chunkIndex, body, userId }: Props) {
+export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSize = 16, lineHeight = 1.9 }: Props) {
   const textRef = useRef<HTMLDivElement>(null);
   const [annotations, setAnnotations] = useState<HighlightRow[]>([]);
   const [selected, setSelected] = useState<Selection | null>(null);
@@ -126,7 +128,8 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId }: Prop
       </div>
       <div
         ref={textRef}
-        className="select-text whitespace-pre-wrap break-words text-sm leading-8"
+        className="select-text whitespace-pre-wrap break-words"
+        style={{ fontSize, lineHeight }}
         onMouseUp={captureSelection}
         onKeyUp={captureSelection}
         onTouchEnd={() => { window.setTimeout(captureSelection, 30); }}
