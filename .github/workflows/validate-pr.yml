@@ -18,6 +18,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: TXT import unit tests
+        run: node --experimental-strip-types --test tests/unit/*.test.mjs
       - name: Strict ESLint verification
         run: npm run lint -- --max-warnings=0
       - name: Build static site
