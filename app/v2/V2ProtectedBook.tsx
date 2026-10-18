@@ -73,7 +73,7 @@ export function V2ProtectedBook({ client, roomId, owner }: Props) {
       target_room: roomId, target_chunk: index, expected_revision: expectedRevision,
     });
     const result = Array.isArray(data) ? data[0] : null;
-    if (error || !isProgress(result) || typeof result.saved !== "boolean") {
+    if (error || !isProgress(result) || !("saved" in result) || typeof result.saved !== "boolean") {
       setMessage("正文读取成功，但同步书签失败，可以稍后重试。");
       return;
     }
