@@ -29,6 +29,7 @@ export type DbNoteReply = {
   user_id: string;
   user_name: string;
   user_color: string;
+  line_style?: LineStyle;
   content: string;
   created_at: string;
 };
