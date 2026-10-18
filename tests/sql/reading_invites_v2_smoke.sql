@@ -3,6 +3,7 @@
 -- then exercises the invitation RPCs against a disposable PostgreSQL database.
 \ir reading_access_v2_smoke.sql
 \ir ../../supabase/migrations/20261018225000_room_invites_v2.sql
+\ir ../../supabase/migrations/20261018230000_v2_issuance_quotas.sql
 
 SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',false);
 SET ROLE authenticated;
@@ -145,4 +146,36 @@ BEGIN
   END IF;
 END $$;
 RESET ROLE;
-\echo 'PASS: owner-approved one-use invitations and actor rate limits'
+
+-- Issuance limits are enforced inside the database, not on client buttons.
+-- Two rooms were created after the quota migration: one more is allowed.
+SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',false);
+SET ROLE authenticated;
+DO $quota$
+DECLARE
+  i integer;
+  blocked boolean := false;
+BEGIN
+  FOR i IN 1..7 LOOP
+    PERFORM public.v2_create_room_invite(current_setting('test.rotation_room')::uuid);
+  END LOOP;
+  BEGIN
+    PERFORM public.v2_create_room_invite(current_setting('test.rotation_room')::uuid);
+  EXCEPTION WHEN SQLSTATE 'P0010' THEN blocked := true;
+  END;
+  IF NOT blocked THEN
+    RAISE EXCEPTION 'invitation issuance quota not enforced';
+  END IF;
+
+  PERFORM public.v2_create_reading_room('Quota room number three');
+  blocked := false;
+  BEGIN
+    PERFORM public.v2_create_reading_room('Quota room number four');
+  EXCEPTION WHEN SQLSTATE 'P0011' THEN blocked := true;
+  END;
+  IF NOT blocked THEN
+    RAISE EXCEPTION 'room creation quota not enforced';
+  END IF;
+END $quota$;
+RESET ROLE;
+\echo 'PASS: owner-approved invitations, actor throttling and issuance quotas'
