@@ -127,4 +127,18 @@ BEGIN
   END;
 END $anonymous$;
 RESET ROLE;
-\echo 'PASS: private content RPC, owner upload, immutable chunks and read/write quotas'
+-- After a room is closed, content may no longer be retrieved even by a
+-- previously authorized owner. Test with the owner's unused read quota.
+UPDATE public.reading_rooms_v2 SET state='closed'
+WHERE id=current_setting('test.invite_room')::uuid;
+SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',false);
+SET ROLE authenticated;
+DO $closed$
+BEGIN
+  IF EXISTS(SELECT 1 FROM public.v2_read_book_chunks(
+    current_setting('test.invite_room')::uuid,0,1)) THEN
+    RAISE EXCEPTION 'closed room allowed content download';
+  END IF;
+END $closed$;
+RESET ROLE;
+\echo 'PASS: private content RPC, owner upload, immutable chunks, quotas and room closure'
