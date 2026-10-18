@@ -1,8 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useEffect, useCallback, useState } from "react";
+import { useMemo, useEffect, useCallback, useState } from "react";
 import type { Highlight, Note, RoomPen, UserProfile, OnlineUser } from "./types";
-import type { LineStyle } from "@/lib/supabase";
 import { buildTextRuns, LINE_STYLE_OPTIONS } from "./utils";
 import { renderHighlightedText } from "./HighlightedText";
 import { OnlineUsers } from "./OnlineUsers";
