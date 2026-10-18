@@ -266,6 +266,57 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
               </div>}
         </details>
       </section>
+      {activePanel && (
+        <div ref={panelRef} className="mt-4 rounded-2xl border border-white/80 bg-white/75 p-4 shadow-sm">
+          {activePanel === "settings" ? (
+            <div className="space-y-4">
+              <h5 className="font-serif text-base">阅读设置</h5>
+              <label className="block text-sm">
+                字号：{fontSize} px
+                <input className="mt-2 w-full accent-[#7f93b7]" type="range"
+                  min={14} max={24} step={2} value={fontSize}
+                  onChange={(event) => setFontSize(Number(event.target.value))} />
+              </label>
+              <label className="block text-sm">
+                行距：{lineHeight.toFixed(1)}
+                <input className="mt-2 w-full accent-[#7f93b7]" type="range"
+                  min={1.5} max={2.3} step={0.2} value={lineHeight}
+                  onChange={(event) => setLineHeight(Number(event.target.value))} />
+              </label>
+              <label className="block text-sm">
+                纸张色彩
+                <select className="mt-2 block w-full rounded-xl border border-[#d7d0c5] bg-white p-2 text-sm"
+                  value={readerTheme}
+                  onChange={(event) => setReaderTheme(
+                    event.target.value as "paper" | "white" | "mist",
+                  )}>
+                  <option value="paper">暖纸色</option>
+                  <option value="white">浅白色</option>
+                  <option value="mist">雾灰色</option>
+                </select>
+              </label>
+              <p className="text-xs text-[#776b5e]">
+                以上设置即时应用于当前阅读页面，不会向数据库写入个人偏好。
+              </p>
+            </div>
+          ) : (
+            <div>
+              <h5 className="font-serif text-base">双人共读</h5>
+              {memberError && <p role="status" className="mt-2 text-xs">{memberError}</p>}
+              <p className="mt-2 text-sm">
+                已加入成员：{memberRoles.length} / 2
+              </p>
+              <p className="mt-2 text-xs leading-6 text-[#6b6560]">
+                {memberRoles.includes("owner") ? "房主已加入。" : "房主信息尚未加载。"}
+                {memberRoles.includes("partner") ? " 共读伙伴已加入。" : " 暂无共读伙伴。"}
+              </p>
+              <p className="mt-2 text-xs text-[#817668]">
+                这里仅显示已加入成员，不代表对方实时在线；未启用在线状态追踪。
+              </p>
+            </div>
+          )}
+        </div>
+      )}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-2 text-xs">
           要阅读的段落
@@ -286,13 +337,39 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
       {message && <p role="status" className="mt-3 text-xs text-[#76563a]">{message}</p>}
       {chunks.map((chunk) => (
         <article key={chunk.chunk_index}
-          className="mt-3 rounded-lg border border-[#e7dfd3] bg-white px-4 py-5">
+          className="mt-3 rounded-lg border border-[#e7dfd3] px-4 py-5"
+          style={{ backgroundColor: textBackground }}>
           <p className="mb-2 text-xs text-[#817668]">段落 {chunk.chunk_index + 1}</p>
-          <V2Annotations key={roomId + ":" + userId + ":" + chunk.chunk_index}
-            client={client} roomId={roomId} userId={userId}
-            chunkIndex={chunk.chunk_index} body={chunk.body} />
+          {annotationsShown ? (
+            <V2Annotations key={roomId + ":" + userId + ":" + chunk.chunk_index}
+              client={client} roomId={roomId} userId={userId}
+              chunkIndex={chunk.chunk_index} body={chunk.body}
+              fontSize={fontSize} lineHeight={lineHeight} />
+          ) : (
+            <p className="whitespace-pre-wrap break-words"
+              style={{ fontSize, lineHeight }}>{chunk.body}</p>
+          )}
         </article>
       ))}
+      <V2GlassDock
+        annotationsShown={annotationsShown}
+        activePanel={activePanel}
+        disabled={working}
+        onCatalog={() => {
+          if (catalogRef.current) {
+            catalogRef.current.open = true;
+            catalogRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          }
+        }}
+        onBookmark={() => {
+          bookmarkRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }}
+        onAnnotations={() => setAnnotationsShown((current) => !current)}
+        onCompanion={() => setActivePanel((current) =>
+          current === "companion" ? null : "companion")}
+        onSettings={() => setActivePanel((current) =>
+          current === "settings" ? null : "settings")}
+      />
     </section>
   );
 }
