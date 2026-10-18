@@ -269,6 +269,11 @@ function extractText(node: Node): string {
 
 export async function prepareEpub(bytes: Uint8Array): Promise<TxtImportPlan> {
   const archive = readEpubArchive(bytes);
+  const mimetype = await archive.readText("mimetype");
+  if (mimetype.trim() !== "application/epub+zip") fail("不是标准 EPUB 文件");
+  if (archive.entries.has("META-INF/encryption.xml")) {
+    fail("包含 DRM 或加密资源，当前测试版不支持");
+  }
   const container = xmlDocument(await archive.readText("META-INF/container.xml"));
   const rootfile = byLocalName(container, "rootfile")[0];
   if (!rootfile) fail("缺少 EPUB 书籍说明");
