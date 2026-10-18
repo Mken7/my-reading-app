@@ -13,6 +13,7 @@ import {
 type Props = {
   client: SupabaseClient;
   roomId: string;
+  onComplete: () => void;
 };
 
 const MAX_TXT_BYTES = 2_000_000;
@@ -25,13 +26,14 @@ const actionClass =
   "rounded-lg border border-[#a99b88] px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50";
 
 /** Stage-only, opt-in upload: opening a file never sends it to Supabase. */
-export function V2TxtImporter({ client, roomId }: Props) {
+export function V2TxtImporter({ client, roomId, onComplete }: Props) {
   const [encoding, setEncoding] = useState<TxtEncoding>("utf-8");
   const [plan, setPlan] = useState<TxtImportPlan | null>(null);
   const [fileName, setFileName] = useState("");
   const [previewIndex, setPreviewIndex] = useState(0);
   const [startIndex, setStartIndex] = useState(0);
   const [uploaded, setUploaded] = useState(0);
+  const [chaptersPublished, setChaptersPublished] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [consent, setConsent] = useState(false);
   const [notice, setNotice] = useState("");
@@ -43,6 +45,7 @@ export function V2TxtImporter({ client, roomId }: Props) {
 
     setPlan(null);
     setUploaded(0);
+    setChaptersPublished(0);
     setConsent(false);
     setFileName("");
     setPreviewIndex(0);
@@ -103,7 +106,31 @@ export function V2TxtImporter({ client, roomId }: Props) {
         setUploaded(completed);
       }
 
-      setNotice(`全部 ${completed} 段已上传至独立测试书房。再次选择文件前请勿重复上传。`);
+      // Save the chapter directory only AFTER every chunk was confirmed.
+      // Publishing a chapter with identical metadata is idempotent, so retries
+      // after a temporary failure cannot silently overwrite chapter titles.
+      const chaptersToPublish = plan.chapters.length
+        ? plan.chapters
+        : [{ title: fileName.replace(/\.(?:txt|epub)$/i, "").slice(0, 80) || "正文",
+             chunkIndex: 0 }];
+      for (let j = chaptersPublished; j < chaptersToPublish.length; j++) {
+        const item = chaptersToPublish[j];
+        const { data, error } = await client.rpc("v2_publish_chapter", {
+          target_room: roomId,
+          target_position: j,
+          chapter_title: item.title,
+          target_start_chunk: startIndex + item.chunkIndex,
+        });
+        if (error || data !== true) {
+          setNotice("正文已确认上传 " + completed + " 段，但章节目录登记停在第 " +
+            (j + 1) + " 项。请勿重新上传正文，可点击按钮重试章节登记。");
+          return;
+        }
+        setChaptersPublished(j + 1);
+      }
+      setNotice("正文与 " + chaptersToPublish.length +
+        " 个章节目录项已写入独立测试书房。");
+      onComplete();
       setPlan(null);
       setConsent(false);
       setFileName("");
@@ -133,6 +160,7 @@ export function V2TxtImporter({ client, roomId }: Props) {
               setEncoding(e.target.value as TxtEncoding);
               setPlan(null);
               setUploaded(0);
+              setChaptersPublished(0);
               setConsent(false);
               setNotice("编码已变更，请重新选择 TXT 文件。");
             }}>
