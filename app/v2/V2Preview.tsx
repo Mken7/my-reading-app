@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { getV2StagingClient, v2StagingConfigured } from "@/lib/v2/staging";
+import { V2ProtectedBook } from "./V2ProtectedBook";
 
 type RoomRow = {
   id: string;
@@ -334,6 +335,7 @@ export function V2Preview() {
                     ))}
                   </div>
                 )}
+                <V2ProtectedBook client={client} roomId={room.id} owner={isOwner} />
               </article>
             );
           })}
