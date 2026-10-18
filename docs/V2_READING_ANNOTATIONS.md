@@ -12,13 +12,13 @@
 
 - 迁移：supabase/migrations/20261018234000_v2_chapters_progress.sql
 - 迁移：supabase/migrations/20261018235000_v2_overlap_annotations.sql
-- 自动测试：tests/sql/reading_annotations_v2_smoke.sql 及其引用的旧用例。涵盖双人/陌生人权限、章节目录、乐观并发控制、交叉批注、私人内容隐藏和哈希链。
-- 单元测试：tests/unit/overlap.test.mjs，验证相交区间、多个作者以及中文、emoji 的码点边界。
+- 自动测试：tests/sql/reading_replies_v2_smoke.sql 及其引用的旧用例。涵盖双人/陌生人权限、章节目录、乐观并发控制、交叉批注、私人内容隐藏和哈希链。
+- 单元测试：tests/unit/overlap.test.mjs 和 tests/unit/ink.test.mjs，验证相交区间、多个作者、中文/emoji 与绘图坐标上限。
 - 只有单独的测试 Supabase 环境启用时，V2 预览路由才会操作这些数据；测试未连接正式数据库。
 
 ## 尚未完成
 
-- 自由画圈、画箭头、手写轨迹、复杂视觉图层和回复；目前只有文字选区的重叠批注。
+- 圆圈、箭头、自由曲线及私人/共享笔记回复的第一版已提交（详见 `docs/V2_INK_AND_REPLIES.md`）。尚未支持缩放重排下的精确文字锚定、已保存笔迹/回复删除、复杂视觉分层与真实手机端到端验收。
 - 精确到字符的跨设备进度、离线草稿队列与跨设备编辑冲突 UI。
 - 账户删除、批注删除与合法导出、旧版真实数据迁移、恶意账号防护、IP 级风控及可申诉的限流。
 - 独立审计链头签名、完整 EPUB 视觉还原和真实 Supabase/浏览器端到端测试。
