@@ -18,6 +18,7 @@ type Props = {
   userId: string;
   fontSize?: number;
   lineHeight?: number;
+  showAnnotations?: boolean;
 };
 
 const buttonClass =
@@ -34,7 +35,7 @@ function validHighlight(value: unknown): value is HighlightRow {
 }
 
 /** All note positions are relative to one immutable, codepoint-indexed chunk. */
-export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSize = 16, lineHeight = 1.9 }: Props) {
+export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSize = 16, lineHeight = 1.9, showAnnotations = true }: Props) {
   const textRef = useRef<HTMLDivElement>(null);
   const [annotations, setAnnotations] = useState<HighlightRow[]>([]);
   const [selected, setSelected] = useState<Selection | null>(null);
@@ -69,6 +70,7 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
   );
 
   function captureSelection() {
+    if (!showAnnotations) return;
     const root = textRef.current;
     const selection = window.getSelection();
     if (!root || !selection || selection.isCollapsed || !selection.rangeCount) return;
@@ -119,13 +121,13 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
 
   return (
     <section className="mt-2">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+      {showAnnotations && <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-[#817668]">
           在正文中选中文字做批注。蓝色代表我，红色代表伙伴，紫色代表重叠。
         </p>
         <button type="button" className={buttonClass} disabled={working}
           onClick={() => { void refresh(); }}>刷新批注</button>
-      </div>
+      </div>}
       <div
         ref={textRef}
         className="select-text whitespace-pre-wrap break-words"
@@ -134,9 +136,9 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
         onKeyUp={captureSelection}
         onTouchEnd={() => { window.setTimeout(captureSelection, 30); }}
         role="document"
-        aria-label="阅读正文，可选择文字创建批注"
+        aria-label={showAnnotations ? "阅读正文，可选择文字创建批注" : "阅读正文（隐藏批注）"}
       >
-        {runs.map((run) => {
+        {showAnnotations ? runs.map((run) => {
           const mine = run.authorIds.includes(userId);
           const partner = run.authorIds.some((author) => author !== userId);
           const mark = mine && partner
@@ -144,9 +146,9 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
             : mine ? "bg-blue-100 underline decoration-blue-600"
             : partner ? "bg-rose-100 underline decoration-rose-600" : "";
           return <span className={mark} key={run.start}>{run.text}</span>;
-        })}
+        }) : body}
       </div>
-      {selected && (
+      {showAnnotations && selected && (
         <div className="mt-3 space-y-3 rounded-lg border border-[#d6c8b4] bg-[#f5efe4] p-3">
           <p className="text-xs">已选择：{selected.quote.slice(0,100)}</p>
           <label className="block text-xs">
@@ -175,7 +177,7 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
         </div>
       )}
       {message && <p role="status" className="mt-2 text-xs text-[#76563a]">{message}</p>}
-      {annotations.length > 0 && (
+      {showAnnotations && annotations.length > 0 && (
         <div className="mt-3 space-y-2">
           <h5 className="text-sm font-medium">这段文字的批注</h5>
           {annotations.map((note) => (
