@@ -128,16 +128,16 @@ SELECT public.v2_create_room_invite(current_setting('test.rotation_room')::uuid)
 SELECT set_config('test.old_invite', :'old_invite', false);
 SELECT public.v2_create_room_invite(current_setting('test.rotation_room')::uuid) AS new_invite \gset
 RESET ROLE;
-DO $
+DO $$
 BEGIN
   IF (SELECT count(*) FROM public.reading_invitations_v2
       WHERE room_id=current_setting('test.rotation_room')::uuid AND status='open') <> 1 THEN
     RAISE EXCEPTION 'invitation rotation left multiple open codes';
   END IF;
-END $;
+END $$;
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000002',false);
-DO $
+DO $$
 BEGIN
   IF public.v2_request_room_join(current_setting('test.old_invite'))
      <> 'invalid_or_expired' THEN
