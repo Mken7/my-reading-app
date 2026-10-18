@@ -680,7 +680,13 @@ function ReadingApp() {
         for (const key in state) {
           const presences = state[key];
           const first = presences?.[0];
-          if (first && typeof first.name === "string" && typeof first.color === "string") {
+          if (
+            first &&
+            "name" in first &&
+            "color" in first &&
+            typeof first.name === "string" &&
+            typeof first.color === "string"
+          ) {
             users.push({ userId: key, name: first.name, color: first.color });
           }
         }
