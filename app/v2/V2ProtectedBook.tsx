@@ -340,15 +340,11 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
           className="mt-3 rounded-lg border border-[#e7dfd3] px-4 py-5"
           style={{ backgroundColor: textBackground }}>
           <p className="mb-2 text-xs text-[#817668]">段落 {chunk.chunk_index + 1}</p>
-          {annotationsShown ? (
-            <V2Annotations key={roomId + ":" + userId + ":" + chunk.chunk_index}
-              client={client} roomId={roomId} userId={userId}
-              chunkIndex={chunk.chunk_index} body={chunk.body}
-              fontSize={fontSize} lineHeight={lineHeight} />
-          ) : (
-            <p className="whitespace-pre-wrap break-words"
-              style={{ fontSize, lineHeight }}>{chunk.body}</p>
-          )}
+          <V2Annotations key={roomId + ":" + userId + ":" + chunk.chunk_index}
+            client={client} roomId={roomId} userId={userId}
+            chunkIndex={chunk.chunk_index} body={chunk.body}
+            fontSize={fontSize} lineHeight={lineHeight}
+            showAnnotations={annotationsShown} />
         </article>
       ))}
       <V2GlassDock
