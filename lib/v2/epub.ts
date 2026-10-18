@@ -56,9 +56,27 @@ function safePath(path: string): string {
 
 function resolvePath(base: string, href: string): string {
   if (/^(?:\/\/|[a-z][a-z0-9+.-]*:)/i.test(href)) fail("禁止外部资源路径");
-  // URL fragments and queries do not belong to OCF ZIP entry filenames.
-  const relative = decodeURIComponent(href.split(/[?#]/, 1)[0]);
-  return safePath((base ? base + "/" : "") + relative);
+  // Relative references can traverse upward inside the book archive, but
+  // must never escape its root. External resource URLs are not loaded.
+  let relative: string;
+  try {
+    relative = decodeURIComponent(href.split(/[?#]/, 1)[0]);
+  } catch {
+    return fail("章节路径编码无效");
+  }
+  if (relative.startsWith("/") || relative.includes("\\") ||
+      relative.includes("\0")) fail("章节路径不安全");
+  const stack = base ? base.split("/") : [];
+  for (const part of relative.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (!stack.length) fail("章节路径越过 EPUB 根目录");
+      stack.pop();
+    } else {
+      stack.push(part);
+    }
+  }
+  return safePath(stack.join("/"));
 }
 
 async function inflateRaw(bytes: Uint8Array, maxBytes: number): Promise<Uint8Array> {
@@ -159,11 +177,16 @@ export function readEpubArchive(bytes: Uint8Array): Archive {
         (compressed > 0 && size > compressed * 200)) {
       fail("ZIP 存在不支持或过大的文件");
     }
-    const path = safePath(UTF8.decode(bytes.subarray(pos + 46, pos + 46 + filenameLength)));
+    const rawName = UTF8.decode(bytes.subarray(pos + 46, pos + 46 + filenameLength));
+    // Directory entries commonly end in a slash; they are not documents.
+    const isDirectory = rawName.endsWith("/");
+    const path = safePath(isDirectory ? rawName.slice(0, -1) : rawName);
     if (entries.has(path)) fail("EPUB 包含重复文件名");
     declaredTotal += size;
     if (declaredTotal > MAX_TOTAL_DECLARED) fail("解压后文件总量过大");
-    entries.set(path, { path, flags, method, size, compressed, crc, localOffset });
+    if (!isDirectory) {
+      entries.set(path, { path, flags, method, size, compressed, crc, localOffset });
+    }
     pos = end;
   }
   if (pos !== directoryStart + directorySize) fail("ZIP 目录长度不匹配");
@@ -175,9 +198,18 @@ export function readEpubArchive(bytes: Uint8Array): Archive {
     if (entry.localOffset + 30 > length || u32(entry.localOffset) !== 0x04034b50) {
       return fail("ZIP 正文头损坏");
     }
+    if (u16(entry.localOffset + 8) !== entry.method ||
+        u16(entry.localOffset + 6) !== entry.flags) {
+      return fail("ZIP 局部文件头与目录不一致");
+    }
     const filenameLength = u16(entry.localOffset + 26);
     const extraLength = u16(entry.localOffset + 28);
-    const start = entry.localOffset + 30 + filenameLength + extraLength;
+    const localNameEnd = entry.localOffset + 30 + filenameLength;
+    if (localNameEnd > length ||
+        UTF8.decode(bytes.subarray(entry.localOffset + 30, localNameEnd)) !== path) {
+      return fail("ZIP 文件名与中央目录不一致");
+    }
+    const start = localNameEnd + extraLength;
     if (start + entry.compressed > directoryStart) return fail("压缩数据越界");
     const source = bytes.subarray(start, start + entry.compressed);
     const inflated = entry.method === 0
@@ -198,13 +230,15 @@ export function readEpubArchive(bytes: Uint8Array): Archive {
 }
 
 function xmlDocument(text: string): Document {
+  // Do not parse DTD/entity declarations from untrusted publications.
+  if (/<!\s*(?:DOCTYPE|ENTITY)\b/i.test(text)) fail("不支持外部实体或 DTD");
   if (typeof DOMParser !== "function") fail("浏览器不支持 XML 解析");
   const doc = new DOMParser().parseFromString(text, "application/xml");
   if (doc.getElementsByTagName("parsererror").length > 0) fail("EPUB XML 文件损坏");
   return doc;
 }
 
-function byLocalName(element: ParentNode, name: string): Element[] {
+function byLocalName(element: Document | Element, name: string): Element[] {
   return Array.from(element.getElementsByTagName("*"))
     .filter((el) => el.localName === name);
 }
