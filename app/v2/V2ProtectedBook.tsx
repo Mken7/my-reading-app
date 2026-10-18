@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { V2TxtImporter } from "./V2TxtImporter";
 
 type ProtectedChunk = { chunk_index: number; body: string };
 
@@ -100,6 +101,7 @@ export function V2ProtectedBook({ client, roomId, owner }: Props) {
           </button>
         </form>
       )}
+      {owner && <V2TxtImporter client={client} roomId={roomId} />}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-2 text-xs">
           要阅读的段落
