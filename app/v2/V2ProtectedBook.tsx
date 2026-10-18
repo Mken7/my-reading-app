@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { V2TxtImporter } from "./V2TxtImporter";
+import { V2Annotations } from "./V2Annotations";
 
 type ProtectedChunk = { chunk_index: number; body: string };
 type Chapter = { chapter_position: number; title: string; start_chunk: number };
@@ -25,6 +26,7 @@ type Props = {
   client: SupabaseClient;
   roomId: string;
   owner: boolean;
+  userId: string;
 };
 
 const inputClass =
@@ -32,7 +34,7 @@ const inputClass =
 const buttonClass =
   "rounded-lg border border-[#cfc4b3] px-3 py-2 text-sm disabled:opacity-50";
 
-export function V2ProtectedBook({ client, roomId, owner }: Props) {
+export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
   const [draft, setDraft] = useState("");
   const [uploadIndex, setUploadIndex] = useState(0);
   const [readIndex, setReadIndex] = useState(0);
@@ -247,7 +249,9 @@ export function V2ProtectedBook({ client, roomId, owner }: Props) {
         <article key={chunk.chunk_index}
           className="mt-3 rounded-lg border border-[#e7dfd3] bg-white px-4 py-5">
           <p className="mb-2 text-xs text-[#817668]">段落 {chunk.chunk_index + 1}</p>
-          <p className="whitespace-pre-wrap break-words text-sm leading-7">{chunk.body}</p>
+          <V2Annotations key={roomId + ":" + userId + ":" + chunk.chunk_index}
+            client={client} roomId={roomId} userId={userId}
+            chunkIndex={chunk.chunk_index} body={chunk.body} />
         </article>
       ))}
     </section>
