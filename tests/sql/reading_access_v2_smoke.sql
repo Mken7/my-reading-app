@@ -16,6 +16,7 @@ INSERT INTO auth.users VALUES
   ('00000000-0000-4000-8000-000000000003');
 
 \ir ../../supabase/migrations/20261018223000_reading_access_v2.sql
+\ir ../../supabase/migrations/20261018224000_reading_audit_v2.sql
 
 -- Authentication is supplied by the JWT context, not a request body.
 SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',false);
@@ -75,6 +76,11 @@ BEGIN
     RAISE EXCEPTION 'author should see own private and shared notes';
   END IF;
   BEGIN
+    PERFORM 1 FROM public.reading_audit_v2;
+    RAISE EXCEPTION 'client must not read audit log directly';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
     UPDATE public.reading_notes_v2
     SET author_id = '00000000-0000-4000-8000-000000000002'
     WHERE body='our shared note';
@@ -82,6 +88,51 @@ BEGIN
   EXCEPTION WHEN check_violation THEN NULL;
   END;
 END $$;
+
+-- Update creates a new revision and a third audit event.
+UPDATE public.reading_notes_v2
+SET body='my private note revised'
+WHERE body='my private note';
+
+RESET ROLE;
+DO $audit$
+DECLARE
+  event public.reading_audit_v2%ROWTYPE;
+  previous text := repeat('0',64);
+  expected text;
+  n integer := 0;
+BEGIN
+  FOR event IN
+    SELECT * FROM public.reading_audit_v2
+    WHERE room_id = current_setting('test.room_id')::uuid
+    ORDER BY sequence_number
+  LOOP
+    n := n + 1;
+    IF event.sequence_number <> n OR event.previous_hash <> previous THEN
+      RAISE EXCEPTION 'audit sequence/previous_hash chain broken';
+    END IF;
+    expected := encode(sha256(convert_to(
+      jsonb_build_object(
+        'version',1,'room',event.room_id,'sequence',event.sequence_number,
+        'actor',event.actor_id,'kind',event.action,'note',event.note_id,
+        'payload_hash',event.payload_hash,'previous_hash',event.previous_hash,
+        'occurred_at',event.occurred_at
+      )::text,'UTF8'
+    )),'hex');
+    IF event.event_hash <> expected THEN
+      RAISE EXCEPTION 'audit event digest failed verification';
+    END IF;
+    previous := event.event_hash;
+  END LOOP;
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'expected 3 audit events; got %', n;
+  END IF;
+  IF (SELECT revision FROM public.reading_notes_v2
+      WHERE body = 'my private note revised') <> 2 THEN
+    RAISE EXCEPTION 'revision counter did not advance';
+  END IF;
+END $audit$;
+SET ROLE authenticated;
 
 -- The second legitimate member sees exactly the shared note.
 SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000002',false);
