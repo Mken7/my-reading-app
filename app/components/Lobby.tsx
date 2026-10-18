@@ -10,7 +10,6 @@ type Props = {
   importing: boolean;
   joinError: string;
   onOpenRename: () => void;
-  onImportTxt: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onJoinRoom: (code: string) => void;
   onEnterBook: (bookId: string) => void;
   onRemoveBook: (bookId: string) => void;
@@ -23,7 +22,6 @@ export function Lobby({
   importing,
   joinError,
   onOpenRename,
-  onImportTxt,
   onJoinRoom,
   onEnterBook,
   onRemoveBook,
