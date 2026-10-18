@@ -26,9 +26,12 @@ Migration order (isolated v2 names only):
 5. `supabase/migrations/20261018231000_v2_private_book_chunks.sql`
    - No direct client SELECT on book content. Authenticated RPC checks active room membership and returns at most two limited-size chunks per request.
    - Owner-only immutable chunk upload, 300 chunks/day per account, and 60 read chunks/hour per room member. Closed rooms cannot deliver content.
-   - Manual staging-only content upload/reader panel is wired into `/v2/`; full TXT/EPUB ingest, legal deletion/export, gateway/IP throttling and production migration still missing. See `docs/V2_PROTECTED_CONTENT.md`.
+   - Manual staging-only content upload/reader panel is wired into `/v2/`; TXT / plain-text EPUB staged ingest is available; legal deletion/export, gateway/IP throttling and production migration still missing. See `docs/V2_PROTECTED_CONTENT.md`.
 
-CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_invites_v2_smoke.sql` (which includes the prior access/audit smoke tests) in an **ephemeral PostgreSQL 16 service**, independent of the real Supabase database. Tests assert owner access, partner privacy, anonymous and third-user denial, two-member capacity, field immutability, private audit access, hash-chain consistency, invite rotation, owner approval, replay denial, actor-level throttling, issuance quotas, protected chunk reads, immutable owner uploads and per-user read/write limits. The frontend continues to require strict lint + TypeScript/static export.
+6. `supabase/migrations/20261018234000_v2_chapters_progress.sql` adds private chapter navigation and per-user revision-safe reading cursors.
+7. `supabase/migrations/20261018235000_v2_overlap_annotations.sql` permits independent overlapping text notes, enforces private/shared RLS and appends hash-chain audit events. See `docs/V2_READING_ANNOTATIONS.md`.
+
+CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_annotations_v2_smoke.sql` (which includes the prior access/audit smoke tests) in an **ephemeral PostgreSQL 16 service**, independent of the real Supabase database. Tests assert owner access, partner privacy, anonymous and third-user denial, two-member capacity, field immutability, private audit access, hash-chain consistency, invite rotation, owner approval, replay denial, actor-level throttling, issuance quotas, protected chunk reads, immutable owner uploads and per-user read/write limits. The frontend continues to require strict lint + TypeScript/static export.
 
 ## Important limits
 
@@ -50,6 +53,8 @@ CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_invites_v2_s
 - [x] Add opt-in isolated V2 email login and owner-approval preview route (requires separate staging credentials, never activated in the normal build).
 - [ ] Confirm the preview with real Supabase Auth in a non-production environment; prevent account-farm / IP-scale guessing before public exposure.
 - [x] Add limited-size member-only content RPC and per-user database read/upload quotas, verified with isolated PostgreSQL tests.
+- [x] Add chapter indexes, per-account reading progress with stale-device conflict detection, and independently overlapping private/shared text notes, with isolated database and Unicode tests.
+- [ ] Add freehand circles/arrows/strokes, replies, note deletion/export, offline queues and realistic device/browser integration tests.
 - [ ] Add IP/network-aware gateway limits, anomalous-use detection and accessible challenges; preserve legitimate reading and data exports.
 - [ ] Add signed/audited off-database chain-head snapshots and explicit data-retention process.
 - [ ] Add monitoring and rollback plans and rehearse restore on synthetic data.
