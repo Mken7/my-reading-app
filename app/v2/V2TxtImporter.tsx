@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ChangeEvent } from "react";
+import { prepareEpub } from "@/lib/v2/epub";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   decodeTxt,
@@ -14,7 +15,8 @@ type Props = {
   roomId: string;
 };
 
-const MAX_BYTES = 2_000_000;
+const MAX_TXT_BYTES = 2_000_000;
+const MAX_EPUB_BYTES = 8_000_000;
 const DAILY_UPLOAD_LIMIT = 300;
 
 const fieldClass =
@@ -46,14 +48,18 @@ export function V2TxtImporter({ client, roomId }: Props) {
     setPreviewIndex(0);
     setNotice("");
     try {
-      if (!/\.txt$/i.test(file.name)) {
-        throw new Error("仅支持 .txt 格式");
+      const isEpub = /\.epub$/i.test(file.name);
+      if (!isEpub && !/\.txt$/i.test(file.name)) {
+        throw new Error("仅支持 .txt 与 .epub 格式");
       }
-      if (file.size > MAX_BYTES) {
-        throw new Error("文件超过 2 MB，测试版暂不支持");
+      const limit = isEpub ? MAX_EPUB_BYTES : MAX_TXT_BYTES;
+      if (file.size > limit) {
+        throw new Error(isEpub ? "EPUB 文件超过 8 MB 安全上限" : "TXT 文件超过 2 MB 安全上限");
       }
-      const text = decodeTxt(new Uint8Array(await file.arrayBuffer()), encoding);
-      const prepared = prepareTxt(text);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const prepared = isEpub
+        ? await prepareEpub(bytes)
+        : prepareTxt(decodeTxt(bytes, encoding));
       setPlan(prepared);
       setFileName(file.name);
       setNotice(
@@ -111,15 +117,16 @@ export function V2TxtImporter({ client, roomId }: Props) {
   return (
     <details className="mt-4 rounded-lg border border-[#ded3c4] bg-white/80 p-3">
       <summary className="cursor-pointer text-sm font-medium">
-        TXT 文件预览与分段导入（仅测试环境）
+        TXT / EPUB 本地预览与分段导入（仅测试环境）
       </summary>
       <p className="mt-3 text-xs leading-6 text-[#817668]">
-        选择文件只在本机解析；只有你勾选确认并点击上传后，内容才会发送到隔离的测试数据库。
+        选择 TXT / EPUB 只在本机解析；EPUB 仅提取正文纯文字，不运行书内脚本，不加载外部资源，
+        不支持 DRM、插图与原书精确排版。只有你确认上传，文字才会发送到隔离的测试数据库。
         每次最多 300 段，禁止覆盖既有段落。请仅使用你有权上传的测试文本。
       </p>
       <div className="mt-3 flex flex-wrap items-end gap-3">
         <label className="text-xs">
-          文字编码
+          TXT 文字编码
           <select className={fieldClass + " ml-2"} value={encoding}
             disabled={uploading} onChange={(e) => {
               if (uploading) return;
@@ -134,8 +141,8 @@ export function V2TxtImporter({ client, roomId }: Props) {
           </select>
         </label>
         <label className="text-xs">
-          本地 TXT 文件
-          <input className="ml-2 max-w-full text-xs" type="file" accept=".txt,text/plain"
+          本地 TXT / EPUB 文件
+          <input className="ml-2 max-w-full text-xs" type="file" accept=".txt,.epub,text/plain,application/epub+zip"
             disabled={uploading} onChange={(event) => { void handleFile(event); }} />
         </label>
       </div>
@@ -184,7 +191,7 @@ export function V2TxtImporter({ client, roomId }: Props) {
             <input className="mt-1" type="checkbox" checked={consent}
               disabled={uploading || plan.chunks.length > DAILY_UPLOAD_LIMIT}
               onChange={(e) => setConsent(e.target.checked)} />
-            我确认拥有上传权，并同意将本地测试文字发送到独立 V2 测试书房。
+            我确认拥有上传权，并同意将本地 TXT / EPUB 提取出的测试文字发送到独立 V2 测试书房。
           </label>
           <button type="button" className={actionClass} onClick={() => { void uploadPlan(); }}
             disabled={uploading || !consent || plan.chunks.length > DAILY_UPLOAD_LIMIT ||
