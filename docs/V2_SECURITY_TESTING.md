@@ -23,8 +23,12 @@ Migration order (isolated v2 names only):
 4. `supabase/migrations/20261018230000_v2_issuance_quotas.sql`
    - Transactional database triggers cap account issuance to three rooms and ten invitations per rolling 24-hour window.
    - Separate from the five join-code attempts per hour; account-farm and IP/device risk protection still needed.
+5. `supabase/migrations/20261018231000_v2_private_book_chunks.sql`
+   - No direct client SELECT on book content. Authenticated RPC checks active room membership and returns at most two limited-size chunks per request.
+   - Owner-only immutable chunk upload, 300 chunks/day per account, and 60 read chunks/hour per room member. Closed rooms cannot deliver content.
+   - Manual staging-only content upload/reader panel is wired into `/v2/`; full TXT/EPUB ingest, legal deletion/export, gateway/IP throttling and production migration still missing. See `docs/V2_PROTECTED_CONTENT.md`.
 
-CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_invites_v2_smoke.sql` (which includes the prior access/audit smoke tests) in an **ephemeral PostgreSQL 16 service**, independent of the real Supabase database. Tests assert owner access, partner privacy, anonymous and third-user denial, two-member capacity, field immutability, private audit access, hash-chain consistency, invite rotation, owner approval, replay denial, actor-level throttling, and issuance quotas. The frontend continues to require strict lint + TypeScript/static export.
+CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_invites_v2_smoke.sql` (which includes the prior access/audit smoke tests) in an **ephemeral PostgreSQL 16 service**, independent of the real Supabase database. Tests assert owner access, partner privacy, anonymous and third-user denial, two-member capacity, field immutability, private audit access, hash-chain consistency, invite rotation, owner approval, replay denial, actor-level throttling, issuance quotas, protected chunk reads, immutable owner uploads and per-user read/write limits. The frontend continues to require strict lint + TypeScript/static export.
 
 ## Important limits
 
@@ -45,7 +49,8 @@ CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_invites_v2_s
 - [x] Add transactional account-based quotas for room creation and invitation issuance, with PostgreSQL regression tests.
 - [x] Add opt-in isolated V2 email login and owner-approval preview route (requires separate staging credentials, never activated in the normal build).
 - [ ] Confirm the preview with real Supabase Auth in a non-production environment; prevent account-farm / IP-scale guessing before public exposure.
-- [ ] Introduce server-enforced quotas and anomaly rate limits; ensure accessibility and legitimate exports still work.
+- [x] Add limited-size member-only content RPC and per-user database read/upload quotas, verified with isolated PostgreSQL tests.
+- [ ] Add IP/network-aware gateway limits, anomalous-use detection and accessible challenges; preserve legitimate reading and data exports.
 - [ ] Add signed/audited off-database chain-head snapshots and explicit data-retention process.
 - [ ] Add monitoring and rollback plans and rehearse restore on synthetic data.
 - [ ] Only then migrate UI flows and determine whether current users can safely migrate.
