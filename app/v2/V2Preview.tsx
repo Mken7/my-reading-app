@@ -47,6 +47,7 @@ export function V2Preview() {
   const [roomTitle, setRoomTitle] = useState("");
   const [inviteInput, setInviteInput] = useState("");
   const [visibleInvites, setVisibleInvites] = useState<Record<string, string>>({});
+  const [openReaderRoomId, setOpenReaderRoomId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!client) return;
@@ -65,6 +66,7 @@ export function V2Preview() {
           setRooms([]);
           setRequests([]);
           setVisibleInvites({});
+          setOpenReaderRoomId(null);
         }
       },
     );
@@ -335,7 +337,20 @@ export function V2Preview() {
                     ))}
                   </div>
                 )}
-                <V2ProtectedBook key={`${session.user.id}:${room.id}`} client={client} roomId={room.id} owner={isOwner} userId={session.user.id} />
+                {room.state === "active" && (
+                  <div className="mt-4">
+                    <button type="button" className={secondaryButtonClass}
+                      aria-expanded={openReaderRoomId === room.id}
+                      onClick={() => setOpenReaderRoomId((current) => current === room.id ? null : room.id)}>
+                      {openReaderRoomId === room.id ? "离开阅读界面" : "进入这本书"}
+                    </button>
+                    {openReaderRoomId === room.id && (
+                      <V2ProtectedBook key={session.user.id + ":" + room.id}
+                        client={client} roomId={room.id}
+                        owner={isOwner} userId={session.user.id} />
+                    )}
+                  </div>
+                )}
               </article>
             );
           })}
