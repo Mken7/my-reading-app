@@ -31,7 +31,10 @@ Migration order (isolated v2 names only):
 6. `supabase/migrations/20261018234000_v2_chapters_progress.sql` adds private chapter navigation and per-user revision-safe reading cursors.
 7. `supabase/migrations/20261018235000_v2_overlap_annotations.sql` permits independent overlapping text notes, enforces private/shared RLS and appends hash-chain audit events. See `docs/V2_READING_ANNOTATIONS.md`.
 
-CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_annotations_v2_smoke.sql` (which includes the prior access/audit smoke tests) in an **ephemeral PostgreSQL 16 service**, independent of the real Supabase database. Tests assert owner access, partner privacy, anonymous and third-user denial, two-member capacity, field immutability, private audit access, hash-chain consistency, invite rotation, owner approval, replay denial, actor-level throttling, issuance quotas, protected chunk reads, immutable owner uploads and per-user read/write limits. The frontend continues to require strict lint + TypeScript/static export.
+8. `supabase/migrations/20261019001000_v2_ink.sql` adds normalized and bounded circle/arrow/stroke shapes with private/shared membership checks and hash-chain audit.
+9. `supabase/migrations/20261019002000_v2_note_replies.sql` adds visibility-inherited text note replies, strict per-note limits and audit. See `docs/V2_INK_AND_REPLIES.md`.
+
+CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_replies_v2_smoke.sql` (which includes the prior access/audit smoke tests) in an **ephemeral PostgreSQL 16 service**, independent of the real Supabase database. Tests assert owner access, partner privacy, anonymous and third-user denial, two-member capacity, field immutability, private audit access, hash-chain consistency, invite rotation, owner approval, replay denial, actor-level throttling, issuance quotas, protected chunk reads, immutable owner uploads and per-user read/write limits. The frontend continues to require strict lint + TypeScript/static export.
 
 ## Important limits
 
@@ -54,7 +57,8 @@ CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_annotations_
 - [ ] Confirm the preview with real Supabase Auth in a non-production environment; prevent account-farm / IP-scale guessing before public exposure.
 - [x] Add limited-size member-only content RPC and per-user database read/upload quotas, verified with isolated PostgreSQL tests.
 - [x] Add chapter indexes, per-account reading progress with stale-device conflict detection, and independently overlapping private/shared text notes, with isolated database and Unicode tests.
-- [ ] Add freehand circles/arrows/strokes, replies, note deletion/export, offline queues and realistic device/browser integration tests.
+- [x] Add bounded hand-drawn circles/arrows/strokes and private/shared threaded replies with isolated SQL and geometry tests.
+- [ ] Add precise cross-layout drawing anchors, existing ink/reply deletion/export, offline queues, accessibility alternatives and device/browser integration tests.
 - [ ] Add IP/network-aware gateway limits, anomalous-use detection and accessible challenges; preserve legitimate reading and data exports.
 - [ ] Add signed/audited off-database chain-head snapshots and explicit data-retention process.
 - [ ] Add monitoring and rollback plans and rehearse restore on synthetic data.
