@@ -51,6 +51,7 @@ BEGIN
   END IF;
   FOR point IN SELECT value FROM jsonb_array_elements(NEW.points) LOOP
     IF jsonb_typeof(point) <> 'object'
+       OR NOT (point ? 'x') OR NOT (point ? 'y')
        OR jsonb_typeof(point->'x') <> 'number'
        OR jsonb_typeof(point->'y') <> 'number'
        OR (point->>'x') !~ '^[0-9]{1,4}$'
