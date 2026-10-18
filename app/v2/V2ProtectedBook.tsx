@@ -1,10 +1,25 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { V2TxtImporter } from "./V2TxtImporter";
 
 type ProtectedChunk = { chunk_index: number; body: string };
+type Chapter = { chapter_position: number; title: string; start_chunk: number };
+type Progress = { chunk_index: number; revision: number };
+type Conflict = { desired: number; remote: Progress };
+function isProgress(value: unknown): value is Progress {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  return Number.isInteger(row.chunk_index) && Number.isInteger(row.revision) &&
+    (row.chunk_index as number) >= 0 && (row.revision as number) > 0;
+}
+function isChapter(value: unknown): value is Chapter {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  return Number.isInteger(row.chapter_position) && Number.isInteger(row.start_chunk) &&
+    typeof row.title === "string";
+}
 
 type Props = {
   client: SupabaseClient;
@@ -24,6 +39,55 @@ export function V2ProtectedBook({ client, roomId, owner }: Props) {
   const [chunks, setChunks] = useState<ProtectedChunk[]>([]);
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("");
+  const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [progress, setProgress] = useState<Progress | null>(null);
+  const [conflict, setConflict] = useState<Conflict | null>(null);
+  const [metaLoading, setMetaLoading] = useState(false);
+
+  const refreshMetadata = useCallback(async () => {
+    setMetaLoading(true);
+    const [directory, bookmark] = await Promise.all([
+      client.from("reading_chapters_v2")
+        .select("chapter_position,title,start_chunk")
+        .eq("room_id", roomId).order("chapter_position").limit(200),
+      client.rpc("v2_get_reading_progress", { target_room: roomId }),
+    ]);
+    if (directory.error || bookmark.error) {
+      setMessage("章节与书签同步失败，请检查测试数据库权限。");
+    } else {
+      setChapters((directory.data ?? []).filter(isChapter));
+      const row = Array.isArray(bookmark.data) ? bookmark.data[0] : null;
+      setProgress(isProgress(row) ? row : null);
+      setConflict(null);
+    }
+    setMetaLoading(false);
+  }, [client, roomId]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void refreshMetadata(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [refreshMetadata]);
+
+  async function saveBookmark(index: number, expectedRevision: number) {
+    const { data, error } = await client.rpc("v2_save_reading_progress", {
+      target_room: roomId, target_chunk: index, expected_revision: expectedRevision,
+    });
+    const result = Array.isArray(data) ? data[0] : null;
+    if (error || !isProgress(result) || typeof result.saved !== "boolean") {
+      setMessage("正文读取成功，但同步书签失败，可以稍后重试。");
+      return;
+    }
+    const remote = { chunk_index: result.chunk_index, revision: result.revision };
+    setProgress(remote);
+    if (result.saved) {
+      setConflict(null);
+      setMessage("已同步本人的阅读进度。");
+    } else {
+      setConflict({ desired: index, remote });
+      setMessage("另一台设备的书签较新。旧位置未被用于覆盖新记录。");
+    }
+  }
+
 
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -69,7 +133,8 @@ export function V2ProtectedBook({ client, roomId, owner }: Props) {
       );
       setChunks(verified);
       setReadIndex(index);
-      setMessage(verified.length ? "仅显示当前获授权的文本段落。" : "服务器返回的数据格式不正确。");
+      if (verified.length) await saveBookmark(index, progress?.revision ?? 0);
+      else setMessage("服务器返回的数据格式不正确。");
     }
     setWorking(false);
   }
@@ -101,7 +166,65 @@ export function V2ProtectedBook({ client, roomId, owner }: Props) {
           </button>
         </form>
       )}
-      {owner && <V2TxtImporter client={client} roomId={roomId} />}
+      {owner && <V2TxtImporter client={client} roomId={roomId}
+        onComplete={() => { void refreshMetadata(); }} />}
+      <section className="mt-4 rounded-lg border border-[#e2d9cb] bg-white/70 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h5 className="text-sm font-medium">我的阅读书签</h5>
+          <button type="button" className={buttonClass} disabled={metaLoading || working}
+            onClick={() => { void refreshMetadata(); }}>
+            {metaLoading ? "同步中…" : "同步目录与书签"}
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-[#817668]">
+          {progress ? "已保存到第 " + (progress.chunk_index + 1) +
+            " 段（版本 " + progress.revision + "）" : "暂无书签。阅读后自动同步。"}
+        </p>
+        {progress && (
+          <button type="button" className={buttonClass + " mt-2"} disabled={working}
+            onClick={() => { void read(progress.chunk_index); }}>
+            从我的书签继续
+          </button>
+        )}
+        {conflict && (
+          <div className="mt-3 rounded-lg border border-amber-300 p-3">
+            <p className="text-xs leading-5">
+              另一设备记录第 {conflict.remote.chunk_index + 1} 段，
+              当前阅读的是第 {conflict.desired + 1} 段。
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button type="button" className={buttonClass} disabled={working}
+                onClick={() => { void read(conflict.remote.chunk_index); }}>
+                使用另一设备位置
+              </button>
+              <button type="button" className={buttonClass} disabled={working}
+                onClick={() => {
+                  setWorking(true);
+                  void saveBookmark(conflict.desired, conflict.remote.revision)
+                    .finally(() => setWorking(false));
+                }}>
+                明确以当前段落覆盖书签
+              </button>
+            </div>
+          </div>
+        )}
+        <details className="mt-3">
+          <summary className="cursor-pointer text-sm">
+            章节目录（展开可能显示后续章节名称）
+          </summary>
+          {chapters.length === 0
+            ? <p className="mt-2 text-xs text-[#817668]">暂无已发布章节。</p>
+            : <div className="mt-2 flex max-h-52 flex-col gap-2 overflow-auto">
+                {chapters.map((chapter) => (
+                  <button type="button" key={chapter.chapter_position}
+                    disabled={working} className={buttonClass + " text-left"}
+                    onClick={() => { void read(chapter.start_chunk); }}>
+                    {chapter.title} · 第 {chapter.start_chunk + 1} 段
+                  </button>
+                ))}
+              </div>}
+        </details>
+      </section>
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-2 text-xs">
           要阅读的段落
