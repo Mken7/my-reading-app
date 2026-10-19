@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { V2TxtImporter } from "./V2TxtImporter";
 import { V2Annotations } from "./V2Annotations";
 import { V2GlassDock } from "./V2GlassDock";
+import {checkedReaderPages,readingPageIndex,spreadSize,READER_SPREAD_QUERY} from "@/lib/v2/readerLayout";
 import { reconcileCursor,validReadingCursor,expectedCursorRevision,
   type ReadingCursor,type ReadingLocation,type CursorConflict } from "@/lib/v2/readingProgressSync";
 
@@ -43,6 +44,9 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
   const [draft, setDraft] = useState("");
   const [uploadIndex, setUploadIndex] = useState(0);
   const [readIndex, setReadIndex] = useState(0);
+  const [pageStart,setPageStart] = useState(0);
+  const [wideSpread,setWideSpread] = useState(false);
+  const attemptedCompanionRef=useRef<number | null>(null);
   const [chunks, setChunks] = useState<ProtectedChunk[]>([]);
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("");
@@ -59,7 +63,7 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
   const progressRef=useRef<Progress | null>(null);
   const conflictRef=useRef<Conflict | null>(null);
   const viewedRef=useRef<ReadingLocation | null>(null);
-  const [readingAnchor,setReadingAnchor]=useState<number | null>(null);
+  const [readingAnchor,setReadingAnchor]=useState<ReadingLocation | null>(null);
   const refreshInFlightRef=useRef(false);
   const channelRef=useRef<BroadcastChannel | null>(null);
   const [metaLoading, setMetaLoading] = useState(false);
@@ -73,6 +77,33 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
   const bookmarkRef = useRef<HTMLElement>(null);
   const catalogRef = useRef<HTMLDetailsElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const pagesRef=useRef<HTMLDivElement>(null);
+
+  useEffect(()=>{
+    const media=window.matchMedia(READER_SPREAD_QUERY);
+    const update=()=>setWideSpread(media.matches);
+    update();
+    media.addEventListener("change",update);
+    return ()=>media.removeEventListener("change",update);
+  },[]);
+
+  // When the viewport expands, fetch only the right-hand page. Never save
+  // another cursor revision or discard the left page's editor state.
+  useEffect(()=>{
+    if(!wideSpread || chunks.length!==1 || chunks[0].chunk_index!==pageStart ||
+       attemptedCompanionRef.current===pageStart || pageStart>=1999)return;
+    attemptedCompanionRef.current=pageStart;
+    let active=true;
+    void client.rpc("v2_read_book_chunks",{
+      target_room:roomId,from_index:pageStart+1,requested_count:1,
+    }).then(({data,error})=>{
+      if(!active || error)return;
+      const right=checkedReaderPages(data,pageStart+1,false)[0];
+      if(right)setChunks(previous=>previous.length===1 &&
+        previous[0].chunk_index===pageStart?[previous[0],right]:previous);
+    });
+    return ()=>{active=false;};
+  },[wideSpread,chunks,pageStart,client,roomId]);
 
   const textBackground = readerTheme === "paper" ? "#faf7f0" :
     readerTheme === "white" ? "#ffffff" : "#e9eeef";
@@ -233,15 +264,15 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
     }
   }
 
-  async function saveExactPosition(offset:number){
-    const current=chunks[0];
+  async function saveExactPosition(chunkIndex:number,offset:number){
+    const current=chunks.find(chunk=>chunk.chunk_index===chunkIndex);
     if(!current || working || !Number.isInteger(offset) || offset<0 ||
        offset>Array.from(current.body).length)return;
     const revisionBeforeSave=expectedCursorRevision(progressRef.current);
     setWorking(true);
-    viewedRef.current={chunk_index:current.chunk_index,char_offset:offset};
+    viewedRef.current={chunk_index:chunkIndex,char_offset:offset};
     await saveBookmark(current.chunk_index,offset,revisionBeforeSave);
-    setReadingAnchor(offset);
+    setReadingAnchor({chunk_index:chunkIndex,char_offset:offset});
     setWorking(false);
   }
 
@@ -311,28 +342,25 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
     const { data, error } = await client.rpc("v2_read_book_chunks", {
       target_room: roomId,
       from_index: index,
-      requested_count: 1,
+      requested_count: spreadSize(wideSpread),
     });
     if (error) {
-      setChunks([]);
-      setMessage("读取失败，请检查测试数据库接口与网络连接。");
+      setMessage("读取失败；已打开的正文和未发送批注仍然保留。请检查网络和阅读权限。");
     } else if (!Array.isArray(data) || data.length === 0) {
-      setChunks([]);
       setMessage("当前段落不存在、你无权读取，或已达到每小时读取限额。");
     } else {
-      const verified: ProtectedChunk[] = data.filter(
-        (item): item is ProtectedChunk =>
-          typeof item === "object" && item !== null &&
-          typeof item.chunk_index === "number" &&
-          typeof item.body === "string",
-      );
-      setChunks(verified);
-      setReadIndex(index);
+      const verified:ProtectedChunk[]=checkedReaderPages(data,index,wideSpread);
+      if(verified.length){
+        attemptedCompanionRef.current=null;
+        setChunks(verified);
+        setPageStart(index);
+        setReadIndex(index);
+      }
       if (verified.length) {
         const point=fromRemoteBookmark && restoreOffset>=0 &&
           restoreOffset<=Array.from(verified[0].body).length ? restoreOffset : 0;
         viewedRef.current={chunk_index:index,char_offset:point};
-        setReadingAnchor(fromRemoteBookmark ? point : null);
+        setReadingAnchor(fromRemoteBookmark ? {chunk_index:index,char_offset:point} : null);
         if(fromRemoteBookmark) {
           recordConflict(null);
           setMessage("已恢复服务器上的阅读位置，不会重复覆盖书签。");
