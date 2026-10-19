@@ -463,32 +463,94 @@ export function V2Preview() {
   if (!session) {
     return (
       <section className="max-w-md rounded-2xl border border-[#d9d0c1] bg-white/80 p-6 shadow-sm">
-        <h2 className="font-serif text-xl">{mode === "login" ? "邮箱登录" : "注册测试账号"}</h2>
+        <h2 className="font-serif text-xl">
+          {mode==="signup"?"注册测试账号":mode==="reset"?"找回测试账号密码":"邮箱登录"}
+        </h2>
         <form onSubmit={(event) => { void submitAuth(event); }} className="mt-5 space-y-4">
           <label className="block space-y-1.5 text-sm">
-            <span>邮箱</span>
+            <span>测试邮箱</span>
             <input className={fieldClass} type="email" autoComplete="email"
               required maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} />
           </label>
-          <label className="block space-y-1.5 text-sm">
-            <span>密码</span>
-            <input className={fieldClass} type="password"
-              autoComplete={mode === "login" ? "current-password" : "new-password"}
-              required minLength={mode === "signup" ? 8 : undefined}
-              value={password} onChange={(e) => setPassword(e.target.value)} />
-          </label>
+          {mode!=="reset" && (
+            <label className="block space-y-1.5 text-sm">
+              <span>{mode==="signup"?"设置密码（至少 12 字符）":"密码"}</span>
+              <input className={fieldClass} type="password" maxLength={128}
+                autoComplete={mode==="login"?"current-password":"new-password"}
+                required minLength={mode==="signup"?12:undefined}
+                value={password} onChange={(e)=>setPassword(e.target.value)}/>
+            </label>
+          )}
           <button className={buttonClass} type="submit" disabled={busy}>
-            {busy ? "请稍候…" : mode === "login" ? "登录测试账号" : "注册测试账号"}
+            {busy?"请稍候…":mode==="signup"?"注册并发送验证邮件":
+             mode==="reset"?"发送找回密码邮件":"登录测试账号"}
           </button>
         </form>
-        <button type="button" className="mt-4 text-sm underline"
-          onClick={() => { setMode(mode === "login" ? "signup" : "login"); setPassword(""); setStatus(""); }}>
-          {mode === "login" ? "还没有测试账号？注册" : "已有测试账号？登录"}
-        </button>
+        <div className="mt-4 flex flex-wrap gap-3 text-sm">
+          {mode!=="login" && (
+            <button type="button" className="underline" disabled={busy}
+              onClick={()=>{setMode("login");setPassword("");setStatus("");}}>
+              返回登录
+            </button>
+          )}
+          {mode!=="signup" && (
+            <button type="button" className="underline" disabled={busy}
+              onClick={()=>{setMode("signup");setPassword("");setStatus("");}}>
+              注册新账号
+            </button>
+          )}
+          {mode!=="reset" && (
+            <button type="button" className="underline" disabled={busy}
+              onClick={()=>{setMode("reset");setPassword("");setStatus("");}}>
+              忘记密码
+            </button>
+          )}
+        </div>
+        {(mode==="signup" || mode==="login") && (
+          <button type="button" className="mt-3 text-xs underline"
+            disabled={busy || !email.trim()}
+            onClick={()=>{void resendVerification();}}>
+            未收到邮箱验证邮件？重新请求发送
+          </button>
+        )}
         {status && <p role="status" className="mt-4 text-sm text-[#76563a]">{status}</p>}
         <p className="mt-5 text-xs leading-6 text-[#817668]">
-          此预览只能使用测试账号，不要填写正式账号密码。真实上线前还需验证邮箱确认、密码恢复及注册防滥用。
+          此预览只接受独立测试 Supabase 账号，不要填写正式账号密码。
+          找回或确认邮件返回当前 V2 页面，不接受外部回跳网址。
+          邮件发送速度和账号频率限制由测试身份服务配置决定。
         </p>
+      </section>
+    );
+  }
+
+  if(recoveryActive){
+    return (
+      <section className="max-w-md rounded-2xl border border-[#d9d0c1] bg-white/80 p-6 shadow-sm">
+        <h2 className="font-serif text-xl">重设测试账号密码</h2>
+        <p className="mt-2 text-xs leading-6 text-[#817668]">
+          已从密码恢复邮件进入受保护会话。完成前不会展示书房；
+          不要向任何人转发邮件中的重置链接。
+        </p>
+        <form onSubmit={(event)=>{void finishRecovery(event);}} className="mt-4 space-y-3">
+          <label className="block text-sm">新密码（12—128 字符）
+            <input className={fieldClass} type="password" autoComplete="new-password"
+              minLength={12} maxLength={128} required
+              value={newPassword} onChange={event=>setNewPassword(event.target.value)}/>
+          </label>
+          <label className="block text-sm">再次输入新密码
+            <input className={fieldClass} type="password" autoComplete="new-password"
+              minLength={12} maxLength={128} required
+              value={repeatPassword} onChange={event=>setRepeatPassword(event.target.value)}/>
+          </label>
+          <button type="submit" className={buttonClass} disabled={busy}>
+            {busy?"正在更新…":"设置新密码并退出其他设备"}
+          </button>
+        </form>
+        <button type="button" className="mt-3 text-sm underline" disabled={busy}
+          onClick={()=>{void logout();}}>
+          放弃重设并退出
+        </button>
+        {status && <p role="status" className="mt-4 text-sm text-[#76563a]">{status}</p>}
       </section>
     );
   }
