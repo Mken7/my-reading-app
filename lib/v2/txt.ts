@@ -34,6 +34,10 @@ export function prepareTxt(text: string, maxCodePoints = 2800): TxtImportPlan {
 
   const normalized = text.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
   if (!normalized.trim()) throw new Error("TXT 文件没有可阅读的文字");
+  // PostgreSQL text cannot store NUL, and binary files masquerading as TXT
+  // must fail before the first immutable chunk is uploaded.
+  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(normalized))
+    throw new Error("TXT 含二进制或不支持的控制字符，无法安全导入");
 
   const points = Array.from(normalized);
   if (points.length > 1_000_000) {
