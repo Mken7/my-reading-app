@@ -613,6 +613,10 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
               <p className="mt-2 text-xs text-[#817668]">
                 只显示近 90 秒活跃提示；双方的阅读位置、选中文字和私人批注均不随在线信号传输。
               </p>
+              <p className="mt-2 text-xs text-[#817668]">
+                双方共享的当前页批注、手绘与已展开回复会自动检查更新；
+                断线时可手动刷新，未来章节的笔记需要你先主动打开该章节才显示。
+              </p>
             </div>
           )}
         </div>
