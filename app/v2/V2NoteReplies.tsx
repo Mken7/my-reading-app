@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { V2EncryptedDraft } from "./V2EncryptedDraft";
+import { removeEncryptedDraft } from "@/lib/v2/encryptedDraft";
 
 type Reply = {
   id: string;
@@ -35,6 +37,7 @@ export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Pr
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [pendingHide, setPendingHide] = useState<string | null>(null);
+  const draftScope = { userId, roomId, kind: "reply" as const, targetId: noteId };
 
   const load = useCallback(async () => {
     const { data, error } = await client.from("reading_note_replies_v2")
@@ -69,6 +72,11 @@ export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Pr
     } else {
       setDraft("");
       setNotice("回复已保存。");
+      try {
+        await removeEncryptedDraft(window.localStorage,draftScope);
+      } catch {
+        setNotice("回复已保存，但本机加密备份未清除，请手动删除。");
+      }
       await load();
     }
     setBusy(false);
@@ -149,6 +157,17 @@ export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Pr
               {busy ? "保存中…" : "发送回复"}
             </button>
           </form>
+          <V2EncryptedDraft
+            scope={draftScope}
+            draftValue={draft.trim().length>0 ? draft : ""}
+            disabled={busy}
+            onRestore={(plaintext) => {
+              if (!plaintext.trim() || plaintext.length>2000 ||
+                  (draft.trim() && draft!==plaintext)) return false;
+              setDraft(plaintext);
+              return true;
+            }}
+          />
         </div>
       )}
       {notice && <p role="status" className="mt-2 text-xs text-[#76563a]">{notice}</p>}
