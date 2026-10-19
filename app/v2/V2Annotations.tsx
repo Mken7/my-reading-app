@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildOverlappingRuns, type V2HighlightRange } from "@/lib/v2/overlap";
+import { anchorFromHumanRange } from "@/lib/v2/textAnchor";
 import { V2InkOverlay } from "./V2InkOverlay";
 import { V2NoteReplies } from "./V2NoteReplies";
 import { V2EncryptedDraft } from "./V2EncryptedDraft";
@@ -48,6 +49,8 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
   const positionMarkerRef=useRef<HTMLSpanElement>(null);
   const [annotations, setAnnotations] = useState<HighlightRow[]>([]);
   const [selected, setSelected] = useState<Selection | null>(null);
+  const [keyboardStart,setKeyboardStart] = useState(1);
+  const [keyboardEnd,setKeyboardEnd] = useState(1);
   const [draft, setDraft] = useState("");
   const [operationId, setOperationId] = useState("");
   const [visibility, setVisibility] = useState<"private" | "shared">("private");
@@ -120,7 +123,20 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
     if (!quote.trim()) return;
     if (selected?.start === start && selected?.end === end) return;
     setSelected({ start,end,quote });
+    setKeyboardStart(start+1);
+    setKeyboardEnd(end);
     setOperationId(crypto.randomUUID());
+  }
+
+  function selectByKeyboardRange() {
+    const anchor=anchorFromHumanRange(keyboardStart,keyboardEnd,body);
+    if(!anchor){
+      setMessage("请输入存在于当前正文中的起止字符序号，首字从 1 开始。");
+      return;
+    }
+    setSelected(anchor);
+    setOperationId(crypto.randomUUID());
+    setMessage("已选择指定 Unicode 字符范围。现在可用手绘工具快速圈注或写文字批注。");
   }
 
   async function submit() {
@@ -179,6 +195,34 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
         <button type="button" className={buttonClass} disabled={working}
           onClick={() => { void refresh(); }}>刷新批注</button>
       </div>}
+      {showAnnotations && (
+        <details className="mb-3 rounded-lg border border-[#e2d9cb] p-2">
+          <summary className="cursor-pointer text-xs">
+            键盘辅助：按字符序号选中文字（也可用于手绘）
+          </summary>
+          <p className="mt-2 text-xs text-[#817668]">
+            起止位置均从 1 开始计数，中文和 emoji 各算一个字符。
+            选中后可用“快速圈注”和“快速箭头”按钮，无需触控画线。
+          </p>
+          <div className="mt-2 flex flex-wrap items-end gap-2">
+            <label className="text-xs">起始字符
+              <input type="number" min={1} max={Array.from(body).length}
+                value={keyboardStart}
+                onChange={(e)=>setKeyboardStart(Number(e.target.value))}
+                className="ml-2 w-20 rounded-lg border border-[#cfc4b3] p-1.5"/>
+            </label>
+            <label className="text-xs">结束字符（含）
+              <input type="number" min={1} max={Array.from(body).length}
+                value={keyboardEnd}
+                onChange={(e)=>setKeyboardEnd(Number(e.target.value))}
+                className="ml-2 w-20 rounded-lg border border-[#cfc4b3] p-1.5"/>
+            </label>
+            <button type="button" className={buttonClass}
+              disabled={working}
+              onClick={selectByKeyboardRange}>选中这个文字范围</button>
+          </div>
+        </details>
+      )}
       <V2InkOverlay client={client} roomId={roomId}
         chunkIndex={chunkIndex} userId={userId} enabled={showAnnotations}
         selectedText={selected} textRootRef={textRef}>
