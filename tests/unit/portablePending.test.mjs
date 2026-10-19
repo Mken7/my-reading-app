@@ -67,7 +67,10 @@ test("wrong password, target, modified ciphertext and duplicated input all fail 
   await assert.rejects(
     importEncryptedPendingBundle(target,{...scope,roomId:"other"},file,secret),/书房/);
   const tampered=JSON.parse(file);
-  tampered.records[0].envelope=tampered.records[0].envelope.replace(/A/,"B");
+  const cipher=JSON.parse(tampered.records[0].envelope);
+  cipher.ciphertext=(cipher.ciphertext.startsWith("A") ? "B" : "A")+
+    cipher.ciphertext.slice(1);
+  tampered.records[0].envelope=JSON.stringify(cipher);
   // Any changed authenticated metadata or ciphertext cannot be accepted.
   await assert.rejects(
     importEncryptedPendingBundle(target,scope,JSON.stringify(tampered),secret));
