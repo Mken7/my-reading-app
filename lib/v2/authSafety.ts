@@ -27,7 +27,8 @@ export function validStagingEndpoint(raw:string|undefined):boolean{
 export function recoveryReturnUrl(current:string):string|null{
   try{
     const url=new URL(current);
-    if(!["https:","http:"].includes(url.protocol) ||
+    if((url.protocol!=="https:" &&
+        !(url.protocol==="http:" && ["localhost","127.0.0.1"].includes(url.hostname))) ||
       url.username || url.password ||
       !/^\/(?:[a-zA-Z0-9._-]+\/)?v2\/?$/.test(url.pathname))return null;
     return url.origin+url.pathname;
