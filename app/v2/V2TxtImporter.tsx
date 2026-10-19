@@ -34,6 +34,8 @@ export function V2TxtImporter({ client, roomId, onComplete }: Props) {
   const [fileName, setFileName] = useState("");
   const [previewIndex, setPreviewIndex] = useState(0);
   const [startIndex, setStartIndex] = useState(0);
+  const [chapterStart,setChapterStart] = useState(0);
+  const [readingFile,setReadingFile] = useState(false);
   const [uploaded, setUploaded] = useState(0);
   const [chaptersPublished, setChaptersPublished] = useState(0);
   const [uploading, setUploading] = useState(false);
@@ -43,7 +45,8 @@ export function V2TxtImporter({ client, roomId, onComplete }: Props) {
   async function handleFile(event: ChangeEvent<HTMLInputElement>) {
     const input = event.currentTarget;
     const file = input.files?.[0];
-    if (uploading || !file) return;
+    if (uploading || readingFile || !file) return;
+    setReadingFile(true);
 
     setPlan(null);
     setUploaded(0);
@@ -77,6 +80,7 @@ export function V2TxtImporter({ client, roomId, onComplete }: Props) {
       setNotice(error instanceof Error ? error.message : "文件读取失败");
     } finally {
       input.value = "";
+      setReadingFile(false);
     }
   }
 
@@ -84,7 +88,9 @@ export function V2TxtImporter({ client, roomId, onComplete }: Props) {
     if (!plan || uploading || !consent ||
         !Number.isInteger(startIndex) || startIndex < 0 ||
         startIndex + plan.chunks.length > 2000 ||
-        plan.chunks.length > DAILY_UPLOAD_LIMIT) return;
+        plan.chunks.length > DAILY_UPLOAD_LIMIT ||
+        !Number.isInteger(chapterStart) || chapterStart < 0 ||
+        chapterStart + Math.max(plan.chapters.length,1) > 200) return;
 
     setUploading(true);
     setNotice("");
@@ -94,14 +100,17 @@ export function V2TxtImporter({ client, roomId, onComplete }: Props) {
       for (let i = uploaded; i < plan.chunks.length; i++) {
         // Server verifies owner, membership, immutable index and quotas.
         // Stop on the first failure: never silently skip or overwrite text.
-        const { data, error } = await client.rpc("v2_upload_book_chunk", {
+        const { data, error } = await client.rpc("v2_upload_book_chunk_retry", {
           target_room: roomId,
           target_index: startIndex + i,
           chunk_text: plan.chunks[i],
         });
-        if (error || data !== true) {
+        if (error || (data !== "saved" && data !== "already_saved")) {
           setNotice(
-            `已成功上传 ${completed}/${plan.chunks.length} 段，停止在序号 ${startIndex + i}。可能是旧段落已存在、配额不足或连接中断；请核实后再继续。`,
+            `已确认 ${completed}/${plan.chunks.length} 段；序号 ${startIndex+i} 导入停止。`+
+            (data==="conflict"
+              ? "此处已有不同正文，绝不覆盖；请检查起始序号与上传文件。"
+              : "可能是每日配额已用完、权限失效或网络中断。请确认后重试。"),
           );
           return;
         }
@@ -120,7 +129,7 @@ export function V2TxtImporter({ client, roomId, onComplete }: Props) {
         const item = chaptersToPublish[j];
         const { data, error } = await client.rpc("v2_publish_chapter", {
           target_room: roomId,
-          target_position: j,
+          target_position: chapterStart + j,
           chapter_title: item.title,
           target_start_chunk: startIndex + item.chunkIndex,
         });
@@ -159,7 +168,7 @@ export function V2TxtImporter({ client, roomId, onComplete }: Props) {
         <label className="text-xs">
           TXT 文字编码
           <select className={fieldClass + " ml-2"} value={encoding}
-            disabled={uploading} onChange={(e) => {
+            disabled={uploading || readingFile} onChange={(e) => {
               if (uploading) return;
               setEncoding(e.target.value as TxtEncoding);
               setPlan(null);
@@ -175,9 +184,10 @@ export function V2TxtImporter({ client, roomId, onComplete }: Props) {
         <label className="text-xs">
           本地 TXT / EPUB / PDF 文件
           <input className="ml-2 max-w-full text-xs" type="file" accept=".txt,.epub,.pdf,text/plain,application/epub+zip,application/pdf"
-            disabled={uploading} onChange={(event) => { void handleFile(event); }} />
+            disabled={uploading || readingFile} onChange={(event) => { void handleFile(event); }} />
         </label>
       </div>
+      {readingFile && <p role="status" className="mt-2 text-xs">正在本地解析文件，尚未上传…</p>}
       {plan && (
         <div className="mt-4 space-y-3 rounded-lg border border-[#e2d9cb] p-3">
           <p className="break-all text-xs font-medium">{fileName}</p>
@@ -219,6 +229,18 @@ export function V2TxtImporter({ client, roomId, onComplete }: Props) {
               min={0} max={1999} step={1} disabled={uploading || uploaded > 0}
               value={startIndex} onChange={(e) => setStartIndex(Number(e.target.value))} />
           </label>
+          <label className="block text-xs">
+            首个章节目录编号（0—199，已有目录不可更改）
+            <input type="number" className={fieldClass + " ml-2 w-24"}
+              min={0} max={199} step={1} disabled={uploading || uploaded>0}
+              value={chapterStart}
+              onChange={(e)=>setChapterStart(Number(e.target.value))}/>
+          </label>
+          {chapterStart + Math.max(plan.chapters.length,1)>200 && (
+            <p role="alert" className="text-xs text-red-800">
+              本次章节加上起始编号超过 200 项，不能上传。
+            </p>
+          )}
           <label className="flex items-start gap-2 text-xs leading-5">
             <input className="mt-1" type="checkbox" checked={consent}
               disabled={uploading || plan.chunks.length > DAILY_UPLOAD_LIMIT}
@@ -228,7 +250,9 @@ export function V2TxtImporter({ client, roomId, onComplete }: Props) {
           <button type="button" className={actionClass} onClick={() => { void uploadPlan(); }}
             disabled={uploading || !consent || plan.chunks.length > DAILY_UPLOAD_LIMIT ||
               !Number.isInteger(startIndex) || startIndex < 0 ||
-              startIndex + plan.chunks.length > 2000}>
+              startIndex + plan.chunks.length > 2000 ||
+              !Number.isInteger(chapterStart) || chapterStart<0 ||
+              chapterStart + Math.max(plan.chapters.length,1)>200}>
             {uploading ? `上传中 ${uploaded}/${plan.chunks.length}` :
               uploaded > 0 ? `从第 ${uploaded + 1} 段继续` : "确认上传测试文字"}
           </button>
