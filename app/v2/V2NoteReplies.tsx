@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { V2EncryptedDraft } from "./V2EncryptedDraft";
 import { removeEncryptedPending,browserPendingMutex } from "@/lib/v2/draftQueue";
+import { removeAtomicPending } from "@/lib/v2/atomicPending";
+import { browserAtomicPendingStore } from "@/lib/v2/browserAtomicPending";
 
 type Reply = {
   id: string;
@@ -82,7 +84,13 @@ export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Pr
       try {
         // Only the acknowledged operation may be removed. Do not discard a
         // different unsent legacy single-slot backup for this same target.
-        await removeEncryptedPending(window.localStorage,draftScope,submissionId,browserPendingMutex);
+        const cleanups=await Promise.allSettled([
+          removeAtomicPending(browserAtomicPendingStore,draftScope,submissionId),
+          removeEncryptedPending(window.localStorage,draftScope,submissionId,browserPendingMutex),
+        ]);
+        if (cleanups.some((result)=>result.status==="rejected")) {
+          throw new Error("本机存在尚未清理的已发送密文");
+        }
         setDraftBackupRevision((revision)=>revision+1);
       } catch {
         setNotice("回复已保存，但本机加密备份未清除，请手动删除。");
