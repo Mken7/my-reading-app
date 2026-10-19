@@ -9,6 +9,8 @@ import {
   addEncryptedPending,listEncryptedPending,recoverEncryptedPending,
   removeEncryptedPending,browserPendingMutex,
 } from "@/lib/v2/draftQueue";
+import { addAtomicPending,listAtomicPending,recoverAtomicPending,removeAtomicPending } from "@/lib/v2/atomicPending";
+import { browserAtomicPendingStore } from "@/lib/v2/browserAtomicPending";
 
 type Props = {
   scope: DraftScope;
@@ -31,6 +33,7 @@ export function V2EncryptedDraft({
   const [busy,setBusy] = useState(false);
   const [message,setMessage] = useState("");
   const [pendingIds,setPendingIds] = useState<string[]>([]);
+  const [durableIds,setDurableIds] = useState<string[]>([]);
   const [confirmRemove,setConfirmRemove] = useState<string | null>(null);
 
   const { userId, roomId, kind, targetId } = scope;
@@ -46,6 +49,13 @@ export function V2EncryptedDraft({
     } catch {
       setMessage("浏览器本地存储不可用，请勿依赖离线备份。");
     }
+    try {
+      setDurableIds(await listAtomicPending(browserAtomicPendingStore,{
+        userId,roomId,kind,targetId,
+      }));
+    } catch {
+      setMessage("IndexedDB 暂不可用。旧版加密备份仍可单独恢复；请勿清理网站数据。");
+    }
   }, [userId,roomId,kind,targetId]);
 
   useEffect(() => {
@@ -56,6 +66,12 @@ export function V2EncryptedDraft({
   // Changes from ANOTHER tab do not trigger React state in this tab.
   // Re-read only the current reader's queue when its hashed index changes.
   useEffect(() => {
+    const refreshOnFocus=()=>{void check();};
+    window.addEventListener("focus",refreshOnFocus);
+    return ()=>window.removeEventListener("focus",refreshOnFocus);
+  },[check]);
+
+  useEffect(() => {
     const refreshFromOtherTab=(event:StorageEvent) => {
       if (event.storageArea===window.localStorage &&
           (event.key===null || event.key.startsWith("reading-v2-pending-index-v1:"))) {
@@ -65,6 +81,52 @@ export function V2EncryptedDraft({
     window.addEventListener("storage",refreshFromOtherTab);
     return ()=>window.removeEventListener("storage",refreshFromOtherTab);
   },[check]);
+
+  async function enqueueDurable() {
+    if (busy || disabled || !draftValue || password.length<12) return;
+    setBusy(true);
+    try {
+      await addAtomicPending(browserAtomicPendingStore,scope,draftValue,password);
+      setDurableIds(await listAtomicPending(browserAtomicPendingStore,scope));
+      setMessage("已加密写入 IndexedDB；恢复后仍需要亲自确认发送。");
+    } catch(error) {
+      setMessage(error instanceof Error ? error.message : "IndexedDB 加密写入失败");
+    } finally {
+      setPassword("");
+      setBusy(false);
+    }
+  }
+
+  async function restoreDurable(id: string) {
+    if (busy || disabled || password.length<12) return;
+    setBusy(true);
+    try {
+      const text=await recoverAtomicPending(browserAtomicPendingStore,scope,id,password);
+      if(text===null) setMessage("这条 IndexedDB 草稿不存在，可能已在另一标签页清除。");
+      else if(onRestore(text)) setMessage("已从 IndexedDB 解密恢复，请检查隐私设置后自行发送。");
+      else setMessage("现有编辑内容不同，未覆盖编辑框。");
+    } catch(error) {
+      setMessage(error instanceof Error ? error.message : "无法解密 IndexedDB 草稿");
+    } finally {
+      setPassword("");
+      setBusy(false);
+    }
+  }
+
+  async function discardDurable(id: string) {
+    if (busy || disabled || confirmRemove!==id) return;
+    setBusy(true);
+    try {
+      await removeAtomicPending(browserAtomicPendingStore,scope,id);
+      setDurableIds(await listAtomicPending(browserAtomicPendingStore,scope));
+      setMessage("已删除选中的 IndexedDB 草稿，其余记录不受影响。");
+    } catch(error) {
+      setMessage(error instanceof Error ? error.message : "删除本机草稿失败");
+    } finally {
+      setConfirmRemove(null);
+      setBusy(false);
+    }
+  }
 
   async function enqueue() {
     if (busy || disabled || !draftValue || password.length < 12) return;
@@ -185,7 +247,10 @@ export function V2EncryptedDraft({
         <div className="flex flex-wrap gap-2">
           <button className="rounded-lg border px-2.5 py-1.5 text-xs disabled:opacity-50"
             type="button" disabled={busy || disabled || password.length < 12 || !draftValue}
-            onClick={()=>{void enqueue();}}>加入加密待发送队列</button>
+            onClick={()=>{void enqueueDurable();}}>加密加入可靠队列（IndexedDB）</button>
+          <button className="rounded-lg border px-2.5 py-1.5 text-xs disabled:opacity-50"
+            type="button" disabled={busy || disabled || password.length<12 || !draftValue}
+            onClick={()=>{void enqueue();}}>加入旧版队列</button>
           <button className="rounded-lg border px-2.5 py-1.5 text-xs disabled:opacity-50"
             type="button" disabled={busy || disabled || password.length < 12 || !draftValue}
             onClick={()=>{void backup();}}>覆盖旧版单份备份</button>
@@ -197,7 +262,43 @@ export function V2EncryptedDraft({
             onClick={()=>{void discard();}}>清除本机备份</button>
         </div>
         <div className="mt-3 rounded-lg border border-[#ded5ca] bg-[#faf8f3] p-2">
-          <p className="text-xs font-medium">本机待发送：{pendingIds.length} / 10</p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-medium">可靠待发送队列：{durableIds.length} / 10</p>
+            <button type="button" className="text-xs underline" disabled={busy}
+              onClick={()=>{void check();}}>刷新列表</button>
+          </div>
+          <p className="mt-1 text-xs text-[#817668]">
+            IndexedDB 原子存储，只展示序号；密文需要口令才能解锁。
+            浏览器清理网站数据仍会丢失草稿。
+          </p>
+          {durableIds.length===0 && <p className="mt-2 text-xs">暂无可靠待发送记录。</p>}
+          <div className="mt-2 space-y-2">
+            {durableIds.map((id,index)=>(
+              <div key={id} className="flex flex-wrap items-center gap-2 rounded-lg border border-[#ddd6cd] p-2">
+                <span className="mr-auto text-xs">可靠草稿 {index+1}</span>
+                <button type="button" className="rounded-lg border px-2 py-1 text-xs disabled:opacity-50"
+                  disabled={busy || disabled || password.length<12}
+                  onClick={()=>{void restoreDurable(id);}}>输入口令恢复</button>
+                {confirmRemove===id ? (
+                  <>
+                    <button type="button" disabled={busy || disabled}
+                      className="rounded-lg border px-2 py-1 text-xs"
+                      onClick={()=>{void discardDurable(id);}}>确认清除</button>
+                    <button type="button" disabled={busy || disabled}
+                      className="rounded-lg border px-2 py-1 text-xs"
+                      onClick={()=>setConfirmRemove(null)}>取消</button>
+                  </>
+                ) : (
+                  <button type="button" disabled={busy || disabled}
+                    className="rounded-lg border px-2 py-1 text-xs"
+                    onClick={()=>setConfirmRemove(id)}>清除</button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="mt-3 rounded-lg border border-[#ded5ca] bg-[#faf8f3] p-2">
+          <p className="text-xs font-medium">旧版 localStorage 待发送：{pendingIds.length} / 10</p>
           <p className="mt-1 text-xs text-[#817668]">
             只展示序号，不预览未解密的私人内容。恢复后请检查隐私范围并自行发送。
             多标签页安全修改需要浏览器支持 Web Locks；不支持时会阻止队列修改。
