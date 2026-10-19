@@ -14,8 +14,9 @@ BEGIN
   RAISE EXCEPTION 'rooms discoverable by default';
  END IF;
  IF NOT public.v2_set_room_listing(room,'Public reading circle','Join to discuss stories',true)
-   OR (SELECT count(*) FROM public.v2_my_room_listings() WHERE room_id=room AND listed)<>1
  THEN RAISE EXCEPTION 'owner could not opt in'; END IF;
+ IF (SELECT count(*) FROM public.v2_my_room_listings() WHERE room_id=room AND listed)<>1
+ THEN RAISE EXCEPTION 'listed room not present to its owner'; END IF;
  IF public.v2_set_room_listing(room,'',repeat('x',241),true) THEN
   RAISE EXCEPTION 'invalid metadata published'; END IF;
 END $owner_listing$;
