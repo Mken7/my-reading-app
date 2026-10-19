@@ -5,6 +5,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { V2TxtImporter } from "./V2TxtImporter";
 import { V2Annotations } from "./V2Annotations";
 import { V2GlassDock } from "./V2GlassDock";
+import { useCompanionPresence } from "./useCompanionPresence";
+import { companionPresenceMessage } from "@/lib/v2/companionPresence";
 import {checkedReaderPages,readingPageIndex,spreadSize,READER_SPREAD_QUERY} from "@/lib/v2/readerLayout";
 import { reconcileCursor,validReadingCursor,expectedCursorRevision,
   type ReadingCursor,type ReadingLocation,type CursorConflict } from "@/lib/v2/readingProgressSync";
@@ -41,6 +43,7 @@ const buttonClass =
   "rounded-lg border border-[#cfc4b3] px-3 py-2 text-sm disabled:opacity-50";
 
 export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
+  const companionPresence = useCompanionPresence(client, roomId, userId);
   const [draft, setDraft] = useState("");
   const [uploadIndex, setUploadIndex] = useState(0);
   const [readIndex, setReadIndex] = useState(0);
@@ -587,8 +590,11 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
                 {memberRoles.includes("owner") ? "房主已加入。" : "房主信息尚未加载。"}
                 {memberRoles.includes("partner") ? " 共读伙伴已加入。" : " 暂无共读伙伴。"}
               </p>
+              <p role="status" className="mt-2 text-xs text-[#817668]">
+                {companionPresenceMessage(companionPresence)}
+              </p>
               <p className="mt-2 text-xs text-[#817668]">
-                这里仅显示已加入成员，不代表对方实时在线；未启用在线状态追踪。
+                只显示近 90 秒活跃提示；双方的阅读位置、选中文字和私人批注均不随在线信号传输。
               </p>
             </div>
           )}
