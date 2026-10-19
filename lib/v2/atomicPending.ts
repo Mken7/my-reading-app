@@ -63,19 +63,54 @@ async function decryptEnvelope(
   return recoverEncryptedDraft(memory,scope,password);
 }
 
-export async function listAtomicPending(
+/** Metadata-only inspection: never decrypts, logs, or exposes note text. */
+function plausibleEnvelope(value: unknown): boolean {
+  if (typeof value!=="string" || value.length<60 || value.length>16000) return false;
+  let data: unknown;
+  try { data=JSON.parse(value); } catch { return false; }
+  if (!data || typeof data!=="object") return false;
+  const record=data as Record<string,unknown>;
+  const base64=/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+  return record.v===1 && record.iterations===310000 &&
+    typeof record.salt==="string" && record.salt.length===24 && base64.test(record.salt) &&
+    typeof record.iv==="string" && record.iv.length===16 && base64.test(record.iv) &&
+    typeof record.ciphertext==="string" &&
+    record.ciphertext.length>=24 && record.ciphertext.length<=12000 &&
+    base64.test(record.ciphertext);
+}
+
+export type PendingInspection = {
+  ids: string[];
+  damagedIds: string[];
+};
+
+/**
+ * A malformed ciphertext must never hide intact entries or be erased by a
+ * background cleanup. It remains listed for explicit user-driven removal.
+ * Malformed row identities are treated as a scope-integrity failure instead.
+ */
+export async function inspectAtomicPending(
   store: AtomicPendingStore,scope: DraftScope,
-): Promise<string[]> {
+): Promise<PendingInspection> {
   const scoped=await keys(scope,"00000000-0000-4000-8000-000000000000");
   const rows=await store.list(scoped.scopeKey);
   if (rows.length>MAX_PENDING_PER_TARGET ||
       rows.some(r=>r.scope!==scoped.scopeKey ||
         !MATCH_UUID.test(r.operation) ||
-        r.id!==scoped.scopeKey+"|"+r.operation ||
-        typeof r.envelope!=="string" || r.envelope.length>16000)) {
-    throw new Error("本地待发送记录不完整或超过数量上限");
+        r.id!==scoped.scopeKey+"|"+r.operation) ||
+      new Set(rows.map(r=>r.operation)).size!==rows.length) {
+    throw new Error("本地待发送记录身份信息不完整或超过数量上限");
   }
-  return rows.map(r=>r.operation);
+  return {
+    ids:rows.map(r=>r.operation),
+    damagedIds:rows.filter(r=>!plausibleEnvelope(r.envelope)).map(r=>r.operation),
+  };
+}
+
+export async function listAtomicPending(
+  store: AtomicPendingStore,scope: DraftScope,
+): Promise<string[]> {
+  return (await inspectAtomicPending(store,scope)).ids;
 }
 
 /** Duplicate operation IDs fail closed; restore the original item instead. */
