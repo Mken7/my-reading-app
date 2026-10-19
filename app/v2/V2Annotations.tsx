@@ -5,6 +5,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildOverlappingRuns, type V2HighlightRange } from "@/lib/v2/overlap";
 import { V2InkOverlay } from "./V2InkOverlay";
 import { V2NoteReplies } from "./V2NoteReplies";
+import { V2EncryptedDraft } from "./V2EncryptedDraft";
+import { removeEncryptedDraft } from "@/lib/v2/encryptedDraft";
 
 type HighlightRow = V2HighlightRange & {
   body: string;
@@ -45,6 +47,7 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
   const [visibility, setVisibility] = useState<"private" | "shared">("private");
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("");
+  const draftScope = { userId, roomId, kind: "highlight" as const, targetId: String(chunkIndex) };
 
   const refresh = useCallback(async () => {
     const { data, error } = await client
@@ -115,6 +118,11 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
       setMessage("已保存批注，重叠范围不会覆盖另一人的笔记。");
       setSelected(null);
       setDraft("");
+      try {
+        await removeEncryptedDraft(window.localStorage,draftScope);
+      } catch {
+        setMessage("批注已发送成功，但本地加密备份未能自动清理，请手动删除。");
+      }
       window.getSelection()?.removeAllRanges();
       await refresh();
     }
@@ -181,6 +189,41 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
             </button>
           </div>
         </div>
+      )}
+      {showAnnotations && (
+        <V2EncryptedDraft
+          scope={draftScope}
+          draftValue={selected && draft.trim()
+            ? JSON.stringify({
+                v:1,body:draft,start:selected.start,
+                end:selected.end,visibility,
+              })
+            : ""}
+          disabled={working}
+          onRestore={(text) => {
+            try {
+              const item = JSON.parse(text) as {
+                v?:unknown;body?:unknown;start?:unknown;end?:unknown;visibility?:unknown;
+              };
+              const points=Array.from(body);
+              if (item.v!==1 || typeof item.body!=="string" ||
+                  item.body.trim().length<1 || item.body.length>2000 ||
+                  !Number.isInteger(item.start) || !Number.isInteger(item.end) ||
+                  typeof item.start!=="number" || typeof item.end!=="number" ||
+                  item.start<0 || item.end<=item.start || item.end>points.length ||
+                  (item.visibility!=="private" && item.visibility!=="shared") ||
+                  !points.slice(item.start,item.end).join("").trim() ||
+                  (draft.trim() && draft!==item.body)) return false;
+              setSelected({
+                start:item.start,end:item.end,
+                quote:points.slice(item.start,item.end).join(""),
+              });
+              setVisibility(item.visibility);
+              setDraft(item.body);
+              return true;
+            } catch { return false; }
+          }}
+        />
       )}
       {message && <p role="status" className="mt-2 text-xs text-[#76563a]">{message}</p>}
       {showAnnotations && annotations.length > 0 && (
