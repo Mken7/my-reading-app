@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./v2/reader-pages.css";
 
 :root {
   /* 原有纸张与墨水基础变量 */
