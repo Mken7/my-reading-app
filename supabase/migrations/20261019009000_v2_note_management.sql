@@ -189,7 +189,7 @@ CREATE OR REPLACE FUNCTION public.v2_submit_reply(
   target_room uuid,target_note uuid,target_body text,target_operation uuid
 )
 RETURNS text LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=''
-AS $
+AS $reply$
 DECLARE actor uuid:=auth.uid();
   original public.reading_note_replies_v2%ROWTYPE;
   inserted_id uuid;
@@ -226,7 +226,7 @@ BEGIN
     WHEN original.highlight_id=target_note AND original.body=target_body
       THEN 'already_saved' ELSE 'conflict' END;
 END;
-$;
+$reply$;
 
 -- Replays of the original submission cannot resurrect a withdrawn note.
 CREATE OR REPLACE FUNCTION public.v2_submit_highlight(
