@@ -101,12 +101,17 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
     let active=true;
     void client.rpc("v2_read_book_chunks",{
       target_room:roomId,from_index:pageStart+1,requested_count:1,
-    }).then(({data,error})=>{
+    }).then(async ({data,error})=>{
       if(!active || error)return;
       const right=checkedReaderPages(data,pageStart+1,false)[0];
-      if(right)setChunks(previous=>previous.length===1 &&
+      if(!right)return;
+      const acknowledgement=await client.rpc("v2_acknowledge_read_chunk",{
+        target_room:roomId,target_chunk:right.chunk_index,
+      });
+      if(!active || acknowledgement.error || acknowledgement.data!==true)return;
+      setChunks(previous=>previous.length===1 &&
         previous[0].chunk_index===pageStart?[previous[0],right]:previous);
-    });
+    }).catch(()=>{/* A failed companion page never alters the loaded left page. */});
     return ()=>{active=false;};
   },[wideSpread,chunks,pageStart,client,roomId]);
 
