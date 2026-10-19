@@ -339,6 +339,7 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
     const revisionAtNavigationStart=expectedCursorRevision(progressRef.current);
     setWorking(true);
     setMessage("");
+    try {
     const { data, error } = await client.rpc("v2_read_book_chunks", {
       target_room: roomId,
       from_index: index,
@@ -369,14 +370,27 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
         }
       } else setMessage("服务器返回的数据格式不正确。");
     }
-    setWorking(false);
+    } catch {
+      setMessage("读取连接失败。已打开的文字与尚未发送的批注不会被清空。");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function turnPage(direction:-1|1,restoreFocus=false) {
+    const next=readingPageIndex(pageStart,direction,wideSpread);
+    if(next===pageStart || working)return;
+    await read(next);
+    if(restoreFocus)window.requestAnimationFrame(()=>{
+      pagesRef.current?.querySelector<HTMLElement>(".v2-reader-page")?.focus();
+    });
   }
 
   return (
     <section className="mt-4 rounded-lg border border-[#e0d9cc] p-4" style={{ backgroundColor: textBackground }}>
       <h4 className="font-serif text-base">受保护的正文 · 测试</h4>
       <p className="mt-1 text-xs leading-5 text-[#817668]">
-        每次按需读取一个不超过 3000 字的段落。服务端核对成员资格，
+        手机每次按需读取一段，宽屏最多读取相邻两段，每段不超过 3000 字。服务端核对成员资格，
         每位成员每书房每小时最多读取 60 段。
       </p>
       {owner && (
@@ -592,12 +606,12 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
           onClick={()=>{void read(readIndex);}}>跳转</button>
         <button type="button" className={buttonClass}
           disabled={working || !chunks.length || pageStart===0}
-          onClick={()=>{void read(readingPageIndex(pageStart,-1,wideSpread));}}>
+          onClick={()=>{void turnPage(-1);}}>
           上一{wideSpread?"组":"页"}
         </button>
         <button type="button" className={buttonClass}
           disabled={working || !chunks.length || pageStart>=1999}
-          onClick={()=>{void read(readingPageIndex(pageStart,1,wideSpread));}}>
+          onClick={()=>{void turnPage(1);}}>
           下一{wideSpread?"组":"页"}
         </button>
         <p className="text-xs text-[#776b5e]" role="status">
@@ -624,7 +638,7 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
                    !["ArrowLeft","ArrowRight"].includes(event.key))return;
                 event.preventDefault();
                 const direction=event.key==="ArrowRight"?1:-1;
-                if(!working)void read(readingPageIndex(pageStart,direction,wideSpread));
+                if(!working)void turnPage(direction,true);
               }}>
               <div className="v2-reader-folio">
                 <span>{pageNumber===0?"Ⅰ":"Ⅱ"}</span>
