@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import type { Session } from "@supabase/supabase-js";
 import { getV2StagingClient, v2StagingConfigured } from "@/lib/v2/staging";
 import { V2ProtectedBook } from "./V2ProtectedBook";
+import {authEventView,recoveryReturnUrl,validNewPassword,type AuthView} from "@/lib/v2/authSafety";
 
 type RoomRow = {
   id: string;
@@ -54,8 +55,12 @@ export function V2Preview() {
   const authEpochRef=useRef(0);
   const loadEpochRef=useRef(0);
   const currentUserRef=useRef<string | null>(null);
+  const recoveryActiveRef=useRef(false);
   const [authChecked, setAuthChecked] = useState(false);
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [mode, setMode] = useState<AuthView>("login");
+  const [recoveryActive,setRecoveryActive] = useState(false);
+  const [newPassword,setNewPassword] = useState("");
+  const [repeatPassword,setRepeatPassword] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -83,8 +88,22 @@ export function V2Preview() {
       setAuthChecked(true);
     });
     const { data: { subscription } } = client.auth.onAuthStateChange(
-      (_event, nextSession) => {
+      (event, nextSession) => {
         if (!active) return;
+        const outcome=authEventView(event,recoveryActiveRef.current);
+        if(outcome==="password_reset"){
+          recoveryActiveRef.current=true;
+          setRecoveryActive(true);
+          setPassword("");
+          setNewPassword("");
+          setRepeatPassword("");
+          setStatus("已验证找回密码链接。请设置新密码；不会直接打开书房。");
+        }else if(outcome==="signed_out"){
+          recoveryActiveRef.current=false;
+          setRecoveryActive(false);
+          setNewPassword("");
+          setRepeatPassword("");
+        }
         const nextUser=nextSession?.user.id??null;
         if(currentUserRef.current!==nextUser){
           authEpochRef.current++;
@@ -205,22 +224,106 @@ export function V2Preview() {
     if (!client || busy) return;
     setBusy(true);
     setStatus("");
-    const credentials = { email: email.trim(), password };
-    if (mode === "signup") {
-      const { data, error } = await client.auth.signUp(credentials);
-      if (error) {
-        setStatus("注册未完成，请检查邮箱、密码及测试项目的注册配置。");
-      } else if (!data.session) {
-        setStatus("注册请求已受理。如果测试项目开启邮箱验证，请前往邮箱确认后登录。");
+    try {
+      const safeEmail=email.trim();
+      if(mode==="reset"){
+        const redirectTo=recoveryReturnUrl(window.location.href);
+        if(!redirectTo){
+          setStatus("找回密码链接只能返回当前 V2 测试页面，请从正确的预览地址进入。");
+          return;
+        }
+        // Always give the same response for registered and unknown emails.
+        const {error}=await client.auth.resetPasswordForEmail(safeEmail,{
+          redirectTo,
+        });
+        setStatus(error
+          ?"暂时无法提交找回请求，请稍后再试。"
+          :"如果该邮箱已注册，请按邮件中的说明重设密码。若未收到，请检查垃圾邮件。");
+      } else if(mode==="signup"){
+        if(!validNewPassword(password)){
+          setStatus("注册密码需 12—128 个字符，请重新设置。");
+          return;
+        }
+        const redirectTo=recoveryReturnUrl(window.location.href);
+        if(!redirectTo){
+          setStatus("确认邮箱邮件只能返回当前 V2 测试页面。");
+          return;
+        }
+        const {data,error}=await client.auth.signUp({
+          email:safeEmail,password,options:{emailRedirectTo:redirectTo},
+        });
+        setStatus(error
+          ?"注册请求未完成。请检查密码规则、网络或邮箱配置。"
+          :data.session?"已登录独立测试环境。"
+          :"如果此邮箱可以注册，请检查收件箱并验证邮件后登录。");
       } else {
-        setStatus("测试账号已登录。");
+        const {error}=await client.auth.signInWithPassword({
+          email:safeEmail,password,
+        });
+        setStatus(error
+          ?"登录失败，请检查邮箱、密码或邮件验证状态。"
+          :"已登录测试书房。");
       }
-    } else {
-      const { error } = await client.auth.signInWithPassword(credentials);
-      setStatus(error ? "登录失败，请核对邮箱、密码及邮箱验证状态。" : "已登录测试书房。");
+    } catch {
+      setStatus("身份服务暂时无法连接，请检查网络后重试。");
+    } finally {
+      setPassword("");
+      setBusy(false);
     }
-    setPassword("");
-    setBusy(false);
+  }
+
+  async function resendVerification(){
+    if(!client || busy || !email.trim())return;
+    setBusy(true);
+    try{
+      const redirectTo=recoveryReturnUrl(window.location.href);
+      if(!redirectTo){
+        setStatus("请从正确的 V2 测试预览路径申请验证邮件。");
+        return;
+      }
+      const {error}=await client.auth.resend({
+        type:"signup",email:email.trim(),options:{emailRedirectTo:redirectTo},
+      });
+      setStatus(error
+        ?"验证邮件请求未完成，请稍后再试。"
+        :"如果该邮箱有待验证的注册申请，请检查收件箱或垃圾邮件。");
+    }catch{
+      setStatus("身份服务暂时不可达，请稍后重试。");
+    }finally{
+      setBusy(false);
+    }
+  }
+
+  async function finishRecovery(event: FormEvent<HTMLFormElement>){
+    event.preventDefault();
+    if(!client || busy || !session || !recoveryActiveRef.current)return;
+    if(!validNewPassword(newPassword) || newPassword!==repeatPassword){
+      setStatus("新密码需 12—128 字符，且两次输入一致。");
+      return;
+    }
+    setBusy(true);
+    try{
+      const {error}=await client.auth.updateUser({password:newPassword});
+      if(error){
+        setStatus("密码更新失败：链接可能过期，或测试项目要求更严格的密码。请重试。");
+        return;
+      }
+      recoveryActiveRef.current=false;
+      setRecoveryActive(false);
+      // Revokes refresh tokens across this account. Already-issued JWTs may
+      // remain valid until their expiry; do not promise immediate erasure.
+      const {error:signOutError}=await client.auth.signOut({scope:"global"});
+      setMode("login");
+      setStatus(signOutError
+        ?"密码已更新，但自动退出所有设备未成功。请立即手动退出，并检查已登录会话。"
+        :"密码已更新，已请求退出所有设备。请用新密码重新登录；已签发的访问令牌可能持续有效至过期。");
+    }catch{
+      setStatus("网络异常，密码变更结果尚不确定。请返回登录页确认，不要反复提交。");
+    }finally{
+      setNewPassword("");
+      setRepeatPassword("");
+      setBusy(false);
+    }
   }
 
   async function createRoom(event: FormEvent<HTMLFormElement>) {
