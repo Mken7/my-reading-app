@@ -1,18 +1,14 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { validStagingEndpoint } from "./authSafety";
 
 // Explicitly isolated from lib/supabase.ts (the legacy live prototype).
 // Never silently fall back to the existing production Supabase project.
 const STAGING_URL = process.env.NEXT_PUBLIC_V2_SUPABASE_URL;
 const STAGING_KEY = process.env.NEXT_PUBLIC_V2_SUPABASE_PUBLISHABLE_KEY;
-const LEGACY_PROJECT_ID = "warhfmpfnlgzofbeuikb";
 
 export const v2StagingConfigured =
   process.env.NEXT_PUBLIC_ENABLE_V2_PREVIEW === "true" &&
-  Boolean(
-    STAGING_URL?.startsWith("https://") &&
-    STAGING_KEY &&
-    !STAGING_URL.includes(LEGACY_PROJECT_ID),
-  );
+  validStagingEndpoint(STAGING_URL) && Boolean(STAGING_KEY?.trim());
 
 let cachedClient: SupabaseClient | null = null;
 
