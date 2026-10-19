@@ -46,6 +46,7 @@ jobs:
           --lib dom,dom.iterable,es2022 --skipLibCheck
           --rootDir lib/v2 --outDir tests/browser/compiled
           lib/v2/browserAtomicPending.ts lib/v2/portablePending.ts
+          lib/v2/readingProgressSync.ts
       - name: Exercise IndexedDB in a real headless browser
         run: node tests/browser/run-indexeddb.cjs
 
