@@ -20,6 +20,7 @@ type Props = {
   noteId: string;
   userId: string;
   visibility: "private" | "shared";
+  activityRevision?: number;
 };
 
 function isReply(raw: unknown): raw is Reply {
@@ -32,7 +33,7 @@ function isReply(raw: unknown): raw is Reply {
 }
 
 /** Reply list fetches only when opened, avoiding hundreds of requests per book. */
-export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Props) {
+export function V2NoteReplies({ client, roomId, noteId, userId, visibility, activityRevision = 0 }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [replies, setReplies] = useState<Reply[]>([]);
   const [draft, setDraft] = useState("");
@@ -59,7 +60,7 @@ export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Pr
     if (!expanded) return;
     const handle = window.setTimeout(() => { void load(); },0);
     return () => window.clearTimeout(handle);
-  },[expanded,load]);
+  },[expanded,load,activityRevision]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
