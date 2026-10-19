@@ -141,7 +141,8 @@ try {
   assert(!validNewPassword("short") && validNewPassword("a".repeat(12)),
     "minimum-password validation differs in real browser");
   assert(authEventView("SIGNED_IN",false)==="normal" &&
-    authEventView("PASSWORD_RECOVERY",false)==="password_reset" &&
+    authEventView("PASSWORD_RECOVERY",false)==="begin_recovery" &&
+    authEventView("USER_UPDATED",true)==="retain_recovery" &&
     authEventView("SIGNED_OUT",true)==="signed_out",
     "sign-in erroneously authorized a recovery-only password change");
 
