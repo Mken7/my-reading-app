@@ -289,8 +289,9 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
     setWorking(false);
   }
 
-  async function read(index: number) {
+  async function read(index: number, fromRemoteBookmark = false) {
     if (working || !Number.isInteger(index) || index < 0 || index > 1999) return;
+    const revisionAtNavigationStart=expectedCursorRevision(progressRef.current);
     setWorking(true);
     setMessage("");
     const { data, error } = await client.rpc("v2_read_book_chunks", {
@@ -313,8 +314,15 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
       );
       setChunks(verified);
       setReadIndex(index);
-      if (verified.length) await saveBookmark(index, progress?.revision ?? 0);
-      else setMessage("服务器返回的数据格式不正确。");
+      if (verified.length) {
+        viewedRef.current=index;
+        if(fromRemoteBookmark) {
+          recordConflict(null);
+          setMessage("已恢复服务器上的阅读位置，不会重复覆盖书签。");
+        } else {
+          await saveBookmark(index,revisionAtNavigationStart);
+        }
+      } else setMessage("服务器返回的数据格式不正确。");
     }
     setWorking(false);
   }
@@ -357,12 +365,17 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
           </button>
         </div>
         <p className="mt-2 text-xs text-[#817668]">
-          {progress ? "已保存到第 " + (progress.chunk_index + 1) +
-            " 段（版本 " + progress.revision + "）" : "暂无书签。阅读后自动同步。"}
+          {progress ? "我的云端进度：第 " + (progress.chunk_index + 1) +
+            " 段（版本 " + progress.revision + "）" : "暂无云端进度。阅读后尝试同步。"}
+        </p>
+        <p className="mt-1 text-xs text-[#817668]">
+          每 45 秒、窗口重新获得焦点时和同账号其他标签页操作后检查新版本。
+          发现不同位置会提示确认，不会擅自跳转或覆盖。
+          共读伙伴无法查看你的私人书签。
         </p>
         {progress && (
           <button type="button" className={buttonClass + " mt-2"} disabled={working}
-            onClick={() => { void read(progress.chunk_index); }}>
+            onClick={() => { void read(progress.chunk_index,true); }}>
             从我的书签继续
           </button>
         )}
@@ -374,7 +387,7 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
               <button type="button" className={buttonClass} disabled={working}
-                onClick={() => { void read(conflict.remote.chunk_index); }}>
+                onClick={() => { void read(conflict.remote.chunk_index,true); }}>
                 使用另一设备位置
               </button>
               <button type="button" className={buttonClass} disabled={working}
@@ -388,6 +401,59 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
             </div>
           </div>
         )}
+        <div className="mt-3 border-t border-[#e3d9cc] pt-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h6 className="text-sm font-medium">我的私人标记（{savedPins.length} / 20）</h6>
+            <button type="button" className={buttonClass} disabled={pinWorking}
+              onClick={() => { void refreshPins(); }}>刷新标记</button>
+          </div>
+          <p className="mt-1 text-xs text-[#817668]">
+            可以额外保存多处段落，不会共享给同一书房的伙伴。
+          </p>
+          {chunks.length>0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <label className="text-xs">
+                标记名称（可留空）
+                <input type="text" maxLength={80}
+                  className={inputClass + " mt-1"} value={pinLabel}
+                  onChange={(event)=>setPinLabel(event.target.value)}
+                  placeholder="例如：重要的对话"/>
+              </label>
+              <button type="button" className={buttonClass}
+                disabled={pinWorking || (savedPins.length>=20 &&
+                  !savedPins.some((pin)=>pin.chunk_index===chunks[0]?.chunk_index))}
+                onClick={()=>{void addPin();}}>
+                标记当前段落 {chunks[0].chunk_index + 1}
+              </button>
+            </div>
+          )}
+          {pinMessage && <p role="status" className="mt-2 text-xs text-[#76563a]">{pinMessage}</p>}
+          <div className="mt-2 flex max-h-48 flex-col gap-2 overflow-y-auto">
+            {savedPins.length===0 && <p className="text-xs text-[#817668]">还没有保存过私人标记。</p>}
+            {savedPins.map((pin)=>(
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[#e2d9cb] p-2"
+                key={pin.chunk_index}>
+                <span className="mr-auto text-xs">
+                  第 {pin.chunk_index+1} 段
+                  {pin.label ? " · "+pin.label : ""}
+                </span>
+                <button type="button" className={buttonClass} disabled={working}
+                  onClick={()=>{void read(pin.chunk_index);}}>阅读</button>
+                {confirmUnpin===pin.chunk_index ? (
+                  <>
+                    <button type="button" className={buttonClass} disabled={pinWorking}
+                      onClick={()=>{void removePin(pin.chunk_index);}}>确认移除</button>
+                    <button type="button" className={buttonClass} disabled={pinWorking}
+                      onClick={()=>setConfirmUnpin(null)}>取消</button>
+                  </>
+                ) : (
+                  <button type="button" className={buttonClass} disabled={pinWorking}
+                    onClick={()=>setConfirmUnpin(pin.chunk_index)}>移除</button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
         <details ref={catalogRef} className="mt-3">
           <summary className="cursor-pointer text-sm">
             章节目录（展开可能显示后续章节名称）
