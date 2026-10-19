@@ -271,7 +271,8 @@ BEGIN
    OR EXISTS(SELECT 1 FROM public.reading_discovery_requests_v2 q
     WHERE q.room_id=r.id AND q.requester_id=actor)
    OR EXISTS(SELECT 1 FROM public.reading_members_v2 m
-    WHERE m.room_id=r.id AND m.user_id=actor));
+    WHERE m.room_id=r.id AND m.user_id=actor))
+ FOR UPDATE OF r;
  IF room_owner IS NULL OR room_owner=actor THEN RETURN false; END IF;
  INSERT INTO public.reading_discovery_blocks_v2(blocker_id,blocked_id)
  VALUES(actor,room_owner) ON CONFLICT DO NOTHING;
