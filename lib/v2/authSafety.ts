@@ -43,8 +43,8 @@ export function validNewPassword(value:string):boolean{
 export type AuthView="login"|"signup"|"reset";
 export function authEventView(
   event:string, authorizedRecovery:boolean,
-):"password_reset"|"signed_out"|"normal"{
-  if(event==="PASSWORD_RECOVERY")return "password_reset";
+):"begin_recovery"|"retain_recovery"|"signed_out"|"normal"{
+  if(event==="PASSWORD_RECOVERY")return "begin_recovery";
   if(event==="SIGNED_OUT")return "signed_out";
-  return authorizedRecovery?"password_reset":"normal";
+  return authorizedRecovery?"retain_recovery":"normal";
 }
