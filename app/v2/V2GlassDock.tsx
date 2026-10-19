@@ -102,7 +102,7 @@ export function V2GlassDock({
                   tool.key === "annotations" ? annotationsShown :
                   tool.key !== "bookmark" && activePanel === tool.key
                 }
-                onClick={() => { tool.action(); setOpen(false); }}>
+                onClick={() => { tool.action(); setOpen(false); triggerRef.current?.focus(); }}>
                 <ToolIcon name={tool.key}/>
                 <span>{tool.label}</span>
               </button>
