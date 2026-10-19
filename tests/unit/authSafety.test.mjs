@@ -47,7 +47,8 @@ test("reset form is reachable only through the actual PASSWORD_RECOVERY auth eve
   assert.equal(authEventView("SIGNED_IN",false),"normal");
   assert.equal(authEventView("INITIAL_SESSION",false),"normal");
   assert.equal(authEventView("TOKEN_REFRESHED",false),"normal");
-  assert.equal(authEventView("PASSWORD_RECOVERY",false),"password_reset");
-  assert.equal(authEventView("TOKEN_REFRESHED",true),"password_reset");
+  assert.equal(authEventView("PASSWORD_RECOVERY",false),"begin_recovery");
+  assert.equal(authEventView("TOKEN_REFRESHED",true),"retain_recovery");
+  assert.equal(authEventView("USER_UPDATED",true),"retain_recovery");
   assert.equal(authEventView("SIGNED_OUT",true),"signed_out");
 });
