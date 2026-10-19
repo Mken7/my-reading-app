@@ -34,6 +34,7 @@ export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Pr
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [pendingHide, setPendingHide] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const { data, error } = await client.from("reading_note_replies_v2")
@@ -73,6 +74,23 @@ export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Pr
     setBusy(false);
   }
 
+  async function hideReply(id: string) {
+    if (busy || pendingHide !== id ||
+      !replies.some((reply) => reply.id === id && reply.author_id === userId)) return;
+    setBusy(true);
+    const { data, error } = await client.rpc("v2_hide_reply", {
+      target_room: roomId, target_reply: id,
+    });
+    setPendingHide(null);
+    if (error || data !== true) {
+      setNotice("撤销失败：只能撤销自己在活动书房内写下的回复。");
+    } else {
+      setNotice("自己的回复已从讨论中隐藏，并保留撤销审计记录。");
+      await load();
+    }
+    setBusy(false);
+  }
+
   return (
     <div className="mt-2 border-t border-[#e6ddd0] pt-2">
       <button className="rounded-md px-2 py-1 text-xs text-[#495872] underline-offset-2 hover:underline"
@@ -93,6 +111,30 @@ export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Pr
                 {item.author_id === userId ? "我" : "共读伙伴"}
               </p>
               <p className="whitespace-pre-wrap break-words text-sm">{item.body}</p>
+              {item.author_id === userId && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {pendingHide === item.id ? (
+                    <>
+                      <button type="button" disabled={busy}
+                        className="rounded-lg border px-2 py-1 text-xs"
+                        onClick={() => { void hideReply(item.id); }}>
+                        确认撤销
+                      </button>
+                      <button type="button" disabled={busy}
+                        className="rounded-lg border px-2 py-1 text-xs"
+                        onClick={() => setPendingHide(null)}>
+                        取消
+                      </button>
+                    </>
+                  ) : (
+                    <button type="button" disabled={busy}
+                      className="rounded-lg border px-2 py-1 text-xs"
+                      onClick={() => setPendingHide(item.id)}>
+                      撤销我的回复
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           ))}
           <form onSubmit={(event) => { void submit(event); }} className="space-y-2">
