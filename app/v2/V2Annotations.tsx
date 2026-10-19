@@ -131,7 +131,8 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
           onClick={() => { void refresh(); }}>刷新批注</button>
       </div>}
       <V2InkOverlay client={client} roomId={roomId}
-        chunkIndex={chunkIndex} userId={userId} enabled={showAnnotations}>
+        chunkIndex={chunkIndex} userId={userId} enabled={showAnnotations}
+        selectedText={selected} textRootRef={textRef}>
       <div
         ref={textRef}
         className="select-text whitespace-pre-wrap break-words"
