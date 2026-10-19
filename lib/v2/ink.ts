@@ -32,8 +32,8 @@ export function addInkPoint(points: InkPoint[], next: InkPoint): InkPoint[] {
 }
 
 export function isValidInkShape(shape: Pick<InkShape,"kind" | "points">): boolean {
-  if (!["stroke","ellipse","arrow"].includes(shape.kind) ||
-      shape.points.length < 2 || shape.points.length > MAX_INK_POINTS ||
+  if (!shape || !["stroke","ellipse","arrow"].includes(shape.kind) ||
+      !Array.isArray(shape.points) || shape.points.length < 2 || shape.points.length > MAX_INK_POINTS ||
       (shape.kind !== "stroke" && shape.points.length !== 2)) return false;
   if (!shape.points.every((point) =>
       point !== null && typeof point === "object" &&
