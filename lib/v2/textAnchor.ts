@@ -47,3 +47,19 @@ export function paddedTextRect(
     height: selection.height+padding*2,
   };
 }
+
+
+/** Accessible 1-based, inclusive character range for a user who cannot
+ * perform pointer text-selection. DB anchors remain 0-based half-open.
+ */
+export function anchorFromHumanRange(
+  firstCharacter:number,lastCharacter:number,body:string,
+): (TextAnchor & {quote:string}) | null {
+  const points=Array.from(body);
+  const start=firstCharacter-1;
+  const end=lastCharacter;
+  if(!Number.isInteger(firstCharacter) || !Number.isInteger(lastCharacter) ||
+      !validTextAnchor({start,end},points.length)) return null;
+  const quote=points.slice(start,end).join("");
+  return quote.trim() ? {start,end,quote} : null;
+}
