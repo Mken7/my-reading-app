@@ -10,7 +10,11 @@ import {
   removeEncryptedPending,browserPendingMutex,
 } from "@/lib/v2/draftQueue";
 import { addAtomicPending,listAtomicPending,recoverAtomicPending,removeAtomicPending } from "@/lib/v2/atomicPending";
-import { browserAtomicPendingStore } from "@/lib/v2/browserAtomicPending";
+import { browserAtomicPendingStore,probeBrowserDraftDatabase } from "@/lib/v2/browserAtomicPending";
+import {
+  inspectDraftStorage, requestDraftPersistence,
+  type DraftStorageHealth,
+} from "@/lib/v2/storageHealth";
 
 type Props = {
   scope: DraftScope;
@@ -35,6 +39,8 @@ export function V2EncryptedDraft({
   const [pendingIds,setPendingIds] = useState<string[]>([]);
   const [durableIds,setDurableIds] = useState<string[]>([]);
   const [confirmRemove,setConfirmRemove] = useState<string | null>(null);
+  const [health,setHealth] = useState<DraftStorageHealth | null>(null);
+  const [healthBusy,setHealthBusy] = useState(false);
 
   const { userId, roomId, kind, targetId } = scope;
   const check = useCallback(async () => {
@@ -81,6 +87,44 @@ export function V2EncryptedDraft({
     window.addEventListener("storage",refreshFromOtherTab);
     return ()=>window.removeEventListener("storage",refreshFromOtherTab);
   },[check]);
+
+  async function inspectStorage() {
+    if (healthBusy) return;
+    setHealthBusy(true);
+    try {
+      const result=await inspectDraftStorage(
+        probeBrowserDraftDatabase,
+        typeof navigator!=="undefined" ? navigator.storage : undefined,
+      );
+      setHealth(result);
+      if (!result.databaseWritable) {
+        setMessage("本机 IndexedDB 写入检查失败。旧草稿不会被主动删除。");
+      }
+    } finally {
+      setHealthBusy(false);
+    }
+  }
+
+  async function askForPersistence() {
+    if (healthBusy) return;
+    setHealthBusy(true);
+    try {
+      const result=await requestDraftPersistence(
+        typeof navigator!=="undefined" ? navigator.storage : undefined,
+      );
+      setMessage(result==="granted"
+        ? "浏览器已允许持久存储，但清理网站数据、卸载或设备损坏仍会使草稿丢失。"
+        : result==="denied"
+        ? "浏览器未授予持久存储；已保存的草稿不会因此被主动清除。"
+        : "当前浏览器未提供持久存储申请接口。");
+      setHealth(await inspectDraftStorage(
+        probeBrowserDraftDatabase,
+        typeof navigator!=="undefined" ? navigator.storage : undefined,
+      ));
+    } finally {
+      setHealthBusy(false);
+    }
+  }
 
   async function enqueueDurable() {
     if (busy || disabled || !draftValue || password.length<12) return;
@@ -235,6 +279,34 @@ export function V2EncryptedDraft({
           队列中的每条密文仅可在本设备恢复，不能跨设备同步；
           也不能抵御恶意浏览器扩展。
         </p>
+        <div className="rounded-lg border border-[#ded5ca] bg-[#f8f7f3] p-3">
+          <p className="text-xs font-medium">本机存储状态（手动检测）</p>
+          <p className="mt-1 text-xs leading-5 text-[#746b60]">
+            检测只写入并清理一条随机临时记录，不读取笔记正文。
+            存储健康不等于永久保留，清理浏览器数据仍会丢失密文。
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button type="button" disabled={healthBusy || busy || disabled}
+              className="rounded-lg border px-2.5 py-1.5 text-xs disabled:opacity-50"
+              onClick={()=>{void inspectStorage();}}>
+              {healthBusy ? "检测中…" : "检查本机存储"}
+            </button>
+            <button type="button" disabled={healthBusy || busy || disabled ||
+              typeof navigator==="undefined" || !navigator.storage?.persist}
+              className="rounded-lg border px-2.5 py-1.5 text-xs disabled:opacity-50"
+              onClick={()=>{void askForPersistence();}}>
+              申请减少浏览器自动清理
+            </button>
+          </div>
+          {health && <div role="status" className="mt-2 space-y-1 text-xs">
+            <p>IndexedDB 写入：{health.databaseWritable ? "测试通过" : "不可用"}</p>
+            <p>数据保留模式：{health.persistence==="granted" ? "浏览器已授予持久存储" :
+              health.persistence==="best-effort" ? "浏览器可按需回收" : "未知"}</p>
+            <p>站点存储估算占用：{health.usedPercent===null
+              ? "浏览器未提供有效估算" : health.usedPercent+"%"}</p>
+            {health.warning && <p className="text-[#9a512d]">{health.warning}</p>}
+          </div>}
+        </div>
         <label className="block text-xs">
           加密口令
           <input type="password" minLength={12} maxLength={128}
