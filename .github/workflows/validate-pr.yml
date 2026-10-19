@@ -46,7 +46,7 @@ jobs:
           --lib dom,dom.iterable,es2022 --skipLibCheck
           --rootDir lib/v2 --outDir tests/browser/compiled
           lib/v2/browserAtomicPending.ts lib/v2/portablePending.ts
-          lib/v2/readingProgressSync.ts
+          lib/v2/readingProgressSync.ts lib/v2/inkReflow.ts
       - name: Exercise IndexedDB in a real headless browser
         run: node tests/browser/run-indexeddb.cjs
 
@@ -70,7 +70,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check isolated database security policies
         run: |
-          psql -v ON_ERROR_STOP=1 -f tests/sql/reading_character_position_v2_smoke.sql
+          psql -v ON_ERROR_STOP=1 -f tests/sql/reading_ink_reflow_v2_smoke.sql
         env:
           PGHOST: localhost
           PGPORT: 5432
