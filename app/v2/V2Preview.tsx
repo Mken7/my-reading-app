@@ -61,6 +61,7 @@ export function V2Preview() {
   const [recoveryActive,setRecoveryActive] = useState(false);
   const [newPassword,setNewPassword] = useState("");
   const [repeatPassword,setRepeatPassword] = useState("");
+  const [recoveryPasswordChanged,setRecoveryPasswordChanged] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -97,12 +98,14 @@ export function V2Preview() {
           setPassword("");
           setNewPassword("");
           setRepeatPassword("");
+          setRecoveryPasswordChanged(false);
           setStatus("已验证找回密码链接。请设置新密码；不会直接打开书房。");
         }else if(outcome==="signed_out"){
           recoveryActiveRef.current=false;
           setRecoveryActive(false);
           setNewPassword("");
           setRepeatPassword("");
+          setRecoveryPasswordChanged(false);
         }
         const nextUser=nextSession?.user.id??null;
         if(currentUserRef.current!==nextUser){
@@ -114,6 +117,8 @@ export function V2Preview() {
           setOwnRequests([]);
           setMemberCounts({});
           setConfirmRevoke(null);
+          setEmail("");
+          setPassword("");
           setVisibleInvites({});
           setOpenReaderRoomId(null);
         }
@@ -297,28 +302,37 @@ export function V2Preview() {
   async function finishRecovery(event: FormEvent<HTMLFormElement>){
     event.preventDefault();
     if(!client || busy || !session || !recoveryActiveRef.current)return;
-    if(!validNewPassword(newPassword) || newPassword!==repeatPassword){
+    if(!recoveryPasswordChanged &&
+       (!validNewPassword(newPassword) || newPassword!==repeatPassword)){
       setStatus("新密码需 12—128 字符，且两次输入一致。");
       return;
     }
     setBusy(true);
     try{
-      const {error}=await client.auth.updateUser({password:newPassword});
-      if(error){
-        setStatus("密码更新失败：链接可能过期，或测试项目要求更严格的密码。请重试。");
+      if(!recoveryPasswordChanged){
+        const {error}=await client.auth.updateUser({password:newPassword});
+        if(error){
+          setStatus("密码更新失败：链接可能过期，或测试项目要求更严格的密码。请重试。");
+          return;
+        }
+        setRecoveryPasswordChanged(true);
+      }
+      // Preserve the reset-only screen until sign-out is confirmed.
+      // The Supabase Auth provider, not client UI, enforces token lifetimes.
+      const {error:signOutError}=await client.auth.signOut({scope:"global"});
+      if(signOutError){
+        setStatus("密码已更新，但未能退出所有会话。请点击“重试退出”，不要进入书房。");
         return;
       }
       recoveryActiveRef.current=false;
       setRecoveryActive(false);
-      // Revokes refresh tokens across this account. Already-issued JWTs may
-      // remain valid until their expiry; do not promise immediate erasure.
-      const {error:signOutError}=await client.auth.signOut({scope:"global"});
+      setRecoveryPasswordChanged(false);
       setMode("login");
-      setStatus(signOutError
-        ?"密码已更新，但自动退出所有设备未成功。请立即手动退出，并检查已登录会话。"
-        :"密码已更新，已请求退出所有设备。请用新密码重新登录；已签发的访问令牌可能持续有效至过期。");
+      setStatus("密码已更新，已请求退出所有设备。请用新密码重新登录；部分旧访问令牌可能直至到期才失效。");
     }catch{
-      setStatus("网络异常，密码变更结果尚不确定。请返回登录页确认，不要反复提交。");
+      setStatus(recoveryPasswordChanged
+        ?"密码已修改，但退出请求未确认。请重试退出，不要重复修改密码。"
+        :"网络异常，密码变更结果尚不确定。请检查邮件并重新登录核实。");
     }finally{
       setNewPassword("");
       setRepeatPassword("");
@@ -439,9 +453,16 @@ export function V2Preview() {
   async function logout() {
     if (!client || busy) return;
     setBusy(true);
-    const { error } = await client.auth.signOut();
-    setStatus(error ? "退出失败，请重试。" : "已退出测试账号。");
-    setBusy(false);
+    try{
+      const {error}=await client.auth.signOut({scope:"global"});
+      setStatus(error
+        ?"退出请求失败，请检查网络后重试。"
+        :"已请求退出所有登录会话。其他设备的既有访问令牌可能继续有效至过期。");
+    }catch{
+      setStatus("连接失败，退出结果未确认，请重试。");
+    }finally{
+      setBusy(false);
+    }
   }
 
   if (!v2StagingConfigured || !client) {
@@ -532,7 +553,7 @@ export function V2Preview() {
           不要向任何人转发邮件中的重置链接。
         </p>
         <form onSubmit={(event)=>{void finishRecovery(event);}} className="mt-4 space-y-3">
-          <label className="block text-sm">新密码（12—128 字符）
+          {!recoveryPasswordChanged && <><label className="block text-sm">新密码（12—128 字符）
             <input className={fieldClass} type="password" autoComplete="new-password"
               minLength={12} maxLength={128} required
               value={newPassword} onChange={event=>setNewPassword(event.target.value)}/>
@@ -542,8 +563,9 @@ export function V2Preview() {
               minLength={12} maxLength={128} required
               value={repeatPassword} onChange={event=>setRepeatPassword(event.target.value)}/>
           </label>
+          </>}
           <button type="submit" className={buttonClass} disabled={busy}>
-            {busy?"正在更新…":"设置新密码并退出其他设备"}
+            {busy?"正在处理…":recoveryPasswordChanged?"重试退出所有设备":"设置新密码并退出其他设备"}
           </button>
         </form>
         <button type="button" className="mt-3 text-sm underline" disabled={busy}
