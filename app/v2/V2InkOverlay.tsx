@@ -20,6 +20,7 @@ type Props = {
   roomId: string;
   chunkIndex: number;
   userId: string;
+  activityRevision?: number;
   enabled: boolean;
   children: ReactNode;
   selectedText: TextAnchor | null;
@@ -148,7 +149,7 @@ function InkPath({ shape, color, opacity = 0.85 }: {
  * paragraph-relative; nothing is deleted or rewritten during migration.
  */
 export function V2InkOverlay({
-  client, roomId, chunkIndex, userId, enabled, children,
+  client, roomId, chunkIndex, userId, activityRevision = 0, enabled, children,
   selectedText, textRootRef,
 }: Props) {
   const [mode, setMode] = useState<InkKind | "read">("read");
@@ -181,7 +182,7 @@ export function V2InkOverlay({
   useEffect(() => {
     const timeout = window.setTimeout(() => { void load(); }, 0);
     return () => window.clearTimeout(timeout);
-  }, [load]);
+  }, [load,activityRevision]);
 
   useEffect(() => {
     const container = containerRef.current;
