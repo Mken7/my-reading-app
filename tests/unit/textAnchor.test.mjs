@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  validTextAnchor, locateTextOffset, paddedTextRect,
+  validTextAnchor, locateTextOffset, paddedTextRect, anchorFromHumanRange,
 } from "../../lib/v2/textAnchor.ts";
 
 test("code-point offsets are translated across React spans and emoji",()=>{
@@ -27,4 +27,20 @@ test("layout adjustment follows a moved selected text rectangle",()=>{
   assert.deepEqual(first,{left:22,top:32,width:76,height:36});
   assert.deepEqual(reflow,{left:92,top:102,width:136,height:38});
   assert.equal(paddedTextRect({left:10,top:10,width:0,height:15},container),null);
+});
+
+
+test("keyboard inclusive Unicode positions map to exact immutable codepoint anchors",()=>{
+  const book="甲😀乙🐈丙";
+  assert.deepEqual(anchorFromHumanRange(2,4,book),{
+    start:1,end:4,quote:"😀乙🐈",
+  });
+  assert.deepEqual(anchorFromHumanRange(1,1,book),{
+    start:0,end:1,quote:"甲",
+  });
+  assert.equal(anchorFromHumanRange(0,2,book),null);
+  assert.equal(anchorFromHumanRange(2,6,book),null);
+  assert.equal(anchorFromHumanRange(2.5,4,book),null);
+  assert.equal(anchorFromHumanRange(4,2,book),null);
+  assert.equal(anchorFromHumanRange(1,1,"   "),null);
 });
