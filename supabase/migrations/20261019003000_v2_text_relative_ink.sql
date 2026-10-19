@@ -9,7 +9,8 @@ ALTER TABLE public.reading_ink_v2
   ADD CONSTRAINT reading_ink_v2_anchor_pair_check
   CHECK (
     (anchor_start IS NULL AND anchor_end IS NULL)
-    OR (anchor_start >= 0 AND anchor_end > anchor_start AND anchor_end <= 3000)
+    OR (anchor_start IS NOT NULL AND anchor_end IS NOT NULL
+        AND anchor_start >= 0 AND anchor_end > anchor_start AND anchor_end <= 3000)
   );
 
 CREATE FUNCTION public.v2_guard_ink_anchor()
