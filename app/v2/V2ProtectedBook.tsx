@@ -5,16 +5,20 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { V2TxtImporter } from "./V2TxtImporter";
 import { V2Annotations } from "./V2Annotations";
 import { V2GlassDock } from "./V2GlassDock";
+import { reconcileCursor,validReadingCursor,expectedCursorRevision,
+  type ReadingCursor,type CursorConflict } from "@/lib/v2/readingProgressSync";
 
 type ProtectedChunk = { chunk_index: number; body: string };
 type Chapter = { chapter_position: number; title: string; start_chunk: number };
-type Progress = { chunk_index: number; revision: number };
-type Conflict = { desired: number; remote: Progress };
-function isProgress(value: unknown): value is Progress {
-  if (!value || typeof value !== "object") return false;
-  const row = value as Record<string, unknown>;
-  return Number.isInteger(row.chunk_index) && Number.isInteger(row.revision) &&
-    (row.chunk_index as number) >= 0 && (row.revision as number) > 0;
+type Progress = ReadingCursor;
+type Conflict = CursorConflict;
+type SavedBookmark = { chunk_index: number; label: string; created_at: string };
+function isBookmark(raw:unknown):raw is SavedBookmark {
+  if(!raw || typeof raw!=="object") return false;
+  const r=raw as Record<string,unknown>;
+  return Number.isInteger(r.chunk_index) && (r.chunk_index as number)>=0 &&
+    (r.chunk_index as number)<=1999 && typeof r.label==="string" &&
+    r.label.length<=80 && typeof r.created_at==="string";
 }
 function isChapter(value: unknown): value is Chapter {
   if (!value || typeof value !== "object") return false;
@@ -45,6 +49,18 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [conflict, setConflict] = useState<Conflict | null>(null);
+  const [savedPins,setSavedPins] = useState<SavedBookmark[]>([]);
+  const [pinLabel,setPinLabel] = useState("");
+  const [confirmUnpin,setConfirmUnpin] = useState<number | null>(null);
+  const [pinWorking,setPinWorking] = useState(false);
+  const [pinMessage,setPinMessage] = useState("");
+  // Refs are updated with every remote revision, so an in-flight chunk read
+  // cannot accidentally use a newly refreshed revision for an older write.
+  const progressRef=useRef<Progress | null>(null);
+  const conflictRef=useRef<Conflict | null>(null);
+  const viewedRef=useRef<number | null>(null);
+  const refreshInFlightRef=useRef(false);
+  const channelRef=useRef<BroadcastChannel | null>(null);
   const [metaLoading, setMetaLoading] = useState(false);
   const [activePanel, setActivePanel] = useState<"companion" | "settings" | null>(null);
   const [annotationsShown, setAnnotationsShown] = useState(true);
@@ -85,50 +101,173 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
     return () => { cancelled = true; };
   }, [activePanel, client, roomId]);
 
-  const refreshMetadata = useCallback(async () => {
-    setMetaLoading(true);
-    const [directory, bookmark] = await Promise.all([
-      client.from("reading_chapters_v2")
-        .select("chapter_position,title,start_chunk")
-        .eq("room_id", roomId).order("chapter_position").limit(200),
-      client.rpc("v2_get_reading_progress", { target_room: roomId }),
-    ]);
-    if (directory.error || bookmark.error) {
-      setMessage("章节与书签同步失败，请检查测试数据库权限。");
-    } else {
-      setChapters((directory.data ?? []).filter(isChapter));
-      const row = Array.isArray(bookmark.data) ? bookmark.data[0] : null;
-      setProgress(isProgress(row) ? row : null);
-      setConflict(null);
+  function recordProgress(next: Progress | null) {
+    progressRef.current=next;
+    setProgress(next);
+  }
+  function recordConflict(next: Conflict | null) {
+    conflictRef.current=next;
+    setConflict(next);
+  }
+
+  // This RPC discloses only the current logged-in reader's personal cursor.
+  // Refreshes do not navigate, save or overwrite unsaved local reading choices.
+  const refreshCursor=useCallback(async (manual=false) => {
+    if(refreshInFlightRef.current) return;
+    refreshInFlightRef.current=true;
+    try {
+      const {data,error}=await client.rpc("v2_get_reading_progress",{
+        target_room:roomId,
+      });
+      if(error){
+        if(manual) setMessage("无法获取书签，请检查网络和书房权限。");
+        return;
+      }
+      const row=Array.isArray(data)?data[0]:null;
+      const remote=validReadingCursor(row)?row:null;
+      const result=reconcileCursor(
+        progressRef.current,remote,viewedRef.current,conflictRef.current,
+      );
+      if(result.changed){
+        progressRef.current=result.current;
+        conflictRef.current=result.conflict;
+        setProgress(result.current);
+        setConflict(result.conflict);
+        if(result.conflict) {
+          setMessage("另一设备更新了我的书签；当前位置未被覆盖，请选择保留哪一个。");
+        } else if(manual){
+          setMessage("书签已同步（不会自动跳转正文）。");
+        }
+      } else if(manual) setMessage("书签已是最新版本。");
+    } catch {
+      if(manual) setMessage("无法连接书签服务，当前阅读位置仍会保留在屏幕上。");
+    } finally {refreshInFlightRef.current=false;}
+  },[client,roomId]);
+
+  const refreshPins=useCallback(async () => {
+    try {
+      const {data,error}=await client.rpc("v2_list_saved_bookmarks",{
+        target_room:roomId,
+      });
+      if(error) {
+        setPinMessage("无法同步私人标记书签，请检查数据库迁移及网络。");
+        return;
+      }
+      setSavedPins((Array.isArray(data)?data:[]).filter(isBookmark));
+    } catch {
+      setPinMessage("网络异常，暂时无法更新书签列表。");
     }
+  },[client,roomId]);
+
+  const refreshMetadata=useCallback(async () => {
+    setMetaLoading(true);
+    const directory=await client.from("reading_chapters_v2")
+      .select("chapter_position,title,start_chunk")
+      .eq("room_id",roomId).order("chapter_position").limit(200);
+    if(directory.error) setMessage("章节同步失败，请检查测试数据库权限。");
+    else setChapters((directory.data??[]).filter(isChapter));
+    await Promise.all([refreshCursor(true),refreshPins()]);
     setMetaLoading(false);
-  }, [client, roomId]);
+  },[client,roomId,refreshCursor,refreshPins]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => { void refreshMetadata(); }, 0);
-    return () => window.clearTimeout(timer);
-  }, [refreshMetadata]);
+    const timer=window.setTimeout(()=>{void refreshMetadata();},0);
+    return ()=>window.clearTimeout(timer);
+  },[refreshMetadata]);
 
-  async function saveBookmark(index: number, expectedRevision: number) {
-    const { data, error } = await client.rpc("v2_save_reading_progress", {
-      target_room: roomId, target_chunk: index, expected_revision: expectedRevision,
-    });
-    const result = Array.isArray(data) ? data[0] : null;
-    if (error || !isProgress(result) || !("saved" in result) || typeof result.saved !== "boolean") {
-      setMessage("正文读取成功，但同步书签失败，可以稍后重试。");
-      return;
-    }
-    const remote = { chunk_index: result.chunk_index, revision: result.revision };
-    setProgress(remote);
-    if (result.saved) {
-      setConflict(null);
-      setMessage("已同步本人的阅读进度。");
-    } else {
-      setConflict({ desired: index, remote });
-      setMessage("另一台设备的书签较新。旧位置未被用于覆盖新记录。");
+  // Metadata-only, non-realtime synchronization. Different devices share
+  // one server cursor via revision CAS but never share reading-presence data.
+  useEffect(() => {
+    const refreshIfVisible=() => {
+      if(!document.hidden) {
+        void refreshCursor();
+        void refreshPins();
+      }
+    };
+    const channel=typeof BroadcastChannel!=="undefined"
+      ? new BroadcastChannel("reading-v2-cursor:"+roomId+":"+userId) : null;
+    channelRef.current=channel;
+    if(channel) channel.onmessage=refreshIfVisible;
+    window.addEventListener("focus",refreshIfVisible);
+    document.addEventListener("visibilitychange",refreshIfVisible);
+    const interval=window.setInterval(refreshIfVisible,45000);
+    return ()=>{
+      window.removeEventListener("focus",refreshIfVisible);
+      document.removeEventListener("visibilitychange",refreshIfVisible);
+      window.clearInterval(interval);
+      channel?.close();
+      if(channelRef.current===channel)channelRef.current=null;
+    };
+  },[roomId,userId,refreshCursor,refreshPins]);
+
+  async function saveBookmark(index:number,expectedRevision:number){
+    try {
+      const {data,error}=await client.rpc("v2_save_reading_progress",{
+        target_room:roomId,target_chunk:index,expected_revision:expectedRevision,
+      });
+      const row=Array.isArray(data)?data[0]:null;
+      if(error || !row || typeof row.saved!=="boolean" ||
+         !Number.isInteger(row.revision)){
+        setMessage("正文已读取，但书签同步失败。请稍后手动同步。");
+        return;
+      }
+      if(row.saved && validReadingCursor(row)){
+        if(!progressRef.current || row.revision>=progressRef.current.revision){
+          recordProgress(row);
+        }
+        recordConflict(null);
+        channelRef.current?.postMessage("bookmark-updated");
+        setMessage("已保存我的阅读进度。");
+      } else if(validReadingCursor(row)){
+        recordProgress(row);
+        recordConflict({desired:index,remote:row});
+        setMessage("其他设备保存了更新的书签，当前段落未覆盖新版本。");
+      } else {
+        setMessage("书签服务器拒绝了旧版本；请先同步并选择书签位置。");
+        void refreshCursor(true);
+      }
+    }catch{
+      setMessage("书签写入网络异常。服务器是否已保存尚不确定，请刷新确认。");
     }
   }
 
+  async function addPin(){
+    const current=chunks[0]?.chunk_index;
+    if(current===undefined || pinWorking)return;
+    setPinWorking(true);
+    try{
+      const {data,error}=await client.rpc("v2_put_saved_bookmark",{
+        target_room:roomId,target_chunk:current,target_label:pinLabel.trim(),
+      });
+      if(error || data!==true){
+        setPinMessage("私人标记未保存：可能超过 20 条或无写入权限。");
+      }else{
+        setPinLabel("");
+        setPinMessage("已保存本人的私人段落标记。");
+        await refreshPins();
+        channelRef.current?.postMessage("pins-updated");
+      }
+    }catch{setPinMessage("网络异常，私人标记暂未确认保存。");}
+    finally{setPinWorking(false);}
+  }
+
+  async function removePin(chunk:number){
+    if(pinWorking || confirmUnpin!==chunk)return;
+    setPinWorking(true);
+    try{
+      const {data,error}=await client.rpc("v2_remove_saved_bookmark",{
+        target_room:roomId,target_chunk:chunk,
+      });
+      if(error || data!==true){
+        setPinMessage("无法移除这个私人标记，可能已在其他设备移除。");
+      }else{
+        setPinMessage("该私人标记已移除，不影响书房伙伴的记录。");
+        await refreshPins();
+        channelRef.current?.postMessage("pins-updated");
+      }
+    }catch{setPinMessage("标记删除失败，请稍后重试。");}
+    finally{setConfirmUnpin(null);setPinWorking(false);}
+  }
 
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
