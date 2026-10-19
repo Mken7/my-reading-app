@@ -138,6 +138,36 @@ export const browserAtomicPendingStore: AtomicPendingStore={
       });
     } finally {db.close();}
   },
+  async insertMany(rows,limit) {
+    if (rows.length===0 || rows.length>limit ||
+        rows.some(row=>row.scope!==rows[0].scope ||
+          typeof row.id!=="string" || typeof row.envelope!=="string") ||
+        new Set(rows.map(row=>row.id)).size!==rows.length) {
+      throw new Error("导入的加密草稿清单格式或数量无效");
+    }
+    const db=await openDatabase();
+    try {
+      await transact<void>(db,"readwrite",(store,set,abort)=>{
+        const count=store.index("byScope").count(rows[0].scope);
+        count.onerror=()=>abort("无法检查加密草稿配额");
+        count.onsuccess=()=>{
+          if (count.result+rows.length>limit) {
+            abort("导入后将超过此位置 10 条草稿的上限");
+            return;
+          }
+          let completed=0;
+          for (const row of rows) {
+            const request=store.add(row);
+            request.onerror=()=>abort("加密草稿编号重复或批量写入失败；未导入任何记录");
+            request.onsuccess=()=>{
+              completed++;
+              if (completed===rows.length) set(undefined);
+            };
+          }
+        };
+      });
+    } finally {db.close();}
+  },
   async remove(id) {
     const db=await openDatabase();
     try {
