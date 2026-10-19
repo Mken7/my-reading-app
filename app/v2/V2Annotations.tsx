@@ -44,6 +44,7 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
   const [annotations, setAnnotations] = useState<HighlightRow[]>([]);
   const [selected, setSelected] = useState<Selection | null>(null);
   const [draft, setDraft] = useState("");
+  const [operationId, setOperationId] = useState("");
   const [visibility, setVisibility] = useState<"private" | "shared">("private");
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("");
@@ -99,26 +100,32 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
     const quote = Array.from(body).slice(start,end).join("");
     if (!quote.trim()) return;
     setSelected({ start,end,quote });
+    setOperationId(crypto.randomUUID());
   }
 
   async function submit() {
     if (!selected || working || !draft.trim()) return;
     setWorking(true);
-    const { error } = await client.from("reading_highlights_v2").insert({
-      room_id: roomId,
-      chunk_index: chunkIndex,
-      author_id: userId,
-      start_index: selected.start,
-      end_index: selected.end,
-      body: draft.trim(),
-      visibility,
+    const submissionId = operationId || crypto.randomUUID();
+    if (!operationId) setOperationId(submissionId);
+    const { data, error } = await client.rpc("v2_submit_highlight", {
+      target_room: roomId,
+      target_chunk: chunkIndex,
+      target_start: selected.start,
+      target_end: selected.end,
+      target_body: draft.trim(),
+      target_visibility: visibility,
+      target_operation: submissionId,
     });
     if (error) {
-      setMessage("批注保存失败：可能没有写入权限或选区超出正文。");
-    } else {
-      setMessage("已保存批注，重叠范围不会覆盖另一人的笔记。");
+      setMessage("网络或服务器异常，无法确定本次是否已保存。请保留当前文本和发送编号，稍后重试；可先手动加密备份。");
+    } else if (data === "saved" || data === "already_saved") {
+      setMessage(data === "already_saved"
+        ? "服务器确认这条批注已保存过，本次重试没有生成重复记录。"
+        : "已保存批注，重叠范围不会覆盖另一人的笔记。");
       setSelected(null);
       setDraft("");
+      setOperationId("");
       try {
         await removeEncryptedDraft(window.localStorage,draftScope);
         setDraftBackupRevision((revision)=>revision+1);
@@ -127,6 +134,10 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
       }
       window.getSelection()?.removeAllRanges();
       await refresh();
+    } else if (data === "conflict") {
+      setMessage("发送编号已关联另一版本，未修改服务器记录。请检查当前文字和可见范围，再另建一条发送任务。");
+    } else {
+      setMessage("服务器拒绝此批注：可能是权限、书房状态或文字选区发生变化。请检查后再试。");
     }
     setWorking(false);
   }
@@ -170,14 +181,20 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
           <label className="block text-xs">
             笔记
             <textarea className="mt-1 min-h-20 w-full rounded-lg border border-[#cfc4b3] bg-white p-2 text-sm"
-              maxLength={2000} value={draft} onChange={(e) => setDraft(e.target.value)}
+              maxLength={2000} value={draft} onChange={(e) => {
+                setDraft(e.target.value);
+                setOperationId(crypto.randomUUID());
+              }}
               placeholder="写下想法，两人可以选中同一段…" />
           </label>
           <label className="flex items-center gap-2 text-xs">
             可见范围
             <select className="rounded-lg border border-[#cfc4b3] bg-white p-2"
               value={visibility}
-              onChange={(e) => setVisibility(e.target.value as "private" | "shared")}>
+              onChange={(e) => {
+                setVisibility(e.target.value as "private" | "shared");
+                setOperationId(crypto.randomUUID());
+              }}>
               <option value="private">仅自己可见</option>
               <option value="shared">双方可见</option>
             </select>
@@ -186,7 +203,7 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
             <button type="button" className={buttonClass} disabled={working || !draft.trim()}
               onClick={() => { void submit(); }}>保存批注</button>
             <button type="button" className={buttonClass} disabled={working}
-              onClick={() => { setSelected(null); window.getSelection()?.removeAllRanges(); }}>
+              onClick={() => { setSelected(null);setOperationId("");window.getSelection()?.removeAllRanges(); }}>
               取消
             </button>
           </div>
@@ -198,8 +215,8 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
           refreshToken={draftBackupRevision}
           draftValue={selected && draft.trim()
             ? JSON.stringify({
-                v:1,body:draft,start:selected.start,
-                end:selected.end,visibility,
+                v:2,body:draft,start:selected.start,
+                end:selected.end,visibility,operationId,
               })
             : ""}
           disabled={working}
@@ -207,14 +224,17 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
             try {
               const item = JSON.parse(text) as {
                 v?:unknown;body?:unknown;start?:unknown;end?:unknown;visibility?:unknown;
+                operationId?:unknown;
               };
               const points=Array.from(body);
-              if (item.v!==1 || typeof item.body!=="string" ||
+              if ((item.v!==1 && item.v!==2) || typeof item.body!=="string" ||
                   item.body.trim().length<1 || item.body.length>2000 ||
                   !Number.isInteger(item.start) || !Number.isInteger(item.end) ||
                   typeof item.start!=="number" || typeof item.end!=="number" ||
                   item.start<0 || item.end<=item.start || item.end>points.length ||
                   (item.visibility!=="private" && item.visibility!=="shared") ||
+                  (item.v===2 && (typeof item.operationId!=="string" ||
+                    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.operationId))) ||
                   !points.slice(item.start,item.end).join("").trim() ||
                   (draft.trim() && draft!==item.body)) return false;
               setSelected({
@@ -223,6 +243,7 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
               });
               setVisibility(item.visibility);
               setDraft(item.body);
+              setOperationId(item.v===2 ? item.operationId as string : crypto.randomUUID());
               return true;
             } catch { return false; }
           }}
