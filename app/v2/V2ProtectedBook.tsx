@@ -6,6 +6,7 @@ import { V2TxtImporter } from "./V2TxtImporter";
 import { V2Annotations } from "./V2Annotations";
 import { V2GlassDock } from "./V2GlassDock";
 import { useCompanionPresence } from "./useCompanionPresence";
+import { useSharedActivity } from "./useSharedActivity";
 import { companionPresenceMessage } from "@/lib/v2/companionPresence";
 import {checkedReaderPages,readingPageIndex,spreadSize,READER_SPREAD_QUERY} from "@/lib/v2/readerLayout";
 import { reconcileCursor,validReadingCursor,expectedCursorRevision,
@@ -44,6 +45,7 @@ const buttonClass =
 
 export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
   const companionPresence = useCompanionPresence(client, roomId, userId);
+  const activityRevision = useSharedActivity(client, roomId, userId);
   const [draft, setDraft] = useState("");
   const [uploadIndex, setUploadIndex] = useState(0);
   const [readIndex, setReadIndex] = useState(0);
@@ -355,6 +357,16 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
     } else {
       const verified:ProtectedChunk[]=checkedReaderPages(data,index,wideSpread);
       if(verified.length){
+        // Explicitly opening this chunk unlocks only already-viewable
+        // shared annotation context; RLS still protects all later chunks.
+        const lastLoaded=verified[verified.length-1].chunk_index;
+        const acknowledgement=await client.rpc("v2_acknowledge_read_chunk",{
+          target_room:roomId,target_chunk:lastLoaded,
+        });
+        if(acknowledgement.error || acknowledgement.data!==true){
+          setMessage("正文已获取，但共享批注解锁失败；请检查测试数据库迁移。");
+          return;
+        }
         attemptedCompanionRef.current=null;
         setChunks(verified);
         setPageStart(index);
@@ -657,6 +669,7 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
                 </button>
               </div>
               <V2Annotations client={client} roomId={roomId} userId={userId}
+                activityRevision={activityRevision}
                 chunkIndex={chunk.chunk_index} body={chunk.body}
                 fontSize={fontSize} lineHeight={lineHeight}
                 showAnnotations={annotationsShown}
