@@ -25,6 +25,8 @@ type Props = {
   fontSize?: number;
   lineHeight?: number;
   showAnnotations?: boolean;
+  readingAnchor?: number | null;
+  onSetReadingPosition?: (offset:number)=>void;
 };
 
 const buttonClass =
@@ -41,8 +43,9 @@ function validHighlight(value: unknown): value is HighlightRow {
 }
 
 /** All note positions are relative to one immutable, codepoint-indexed chunk. */
-export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSize = 16, lineHeight = 1.9, showAnnotations = true }: Props) {
+export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSize = 16, lineHeight = 1.9, showAnnotations = true, readingAnchor = null, onSetReadingPosition }: Props) {
   const textRef = useRef<HTMLDivElement>(null);
+  const positionMarkerRef=useRef<HTMLSpanElement>(null);
   const [annotations, setAnnotations] = useState<HighlightRow[]>([]);
   const [selected, setSelected] = useState<Selection | null>(null);
   const [draft, setDraft] = useState("");
@@ -77,6 +80,20 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
     () => buildOverlappingRuns(body, annotations),
     [body, annotations],
   );
+  const plainTextRuns = useMemo(
+    () => [{start:0,end:Array.from(body).length,text:body,authorIds:[] as string[]}],
+    [body],
+  );
+
+  useEffect(()=>{
+    if(readingAnchor===null) return;
+    const id=window.requestAnimationFrame(()=>{
+      positionMarkerRef.current?.scrollIntoView({
+        behavior:"smooth",block:"center",
+      });
+    });
+    return ()=>window.cancelAnimationFrame(id);
+  },[readingAnchor,body,showAnnotations]);
 
   function captureSelection() {
     if (!showAnnotations) return;
@@ -175,15 +192,31 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
         role="document"
         aria-label={showAnnotations ? "阅读正文，可选择文字创建批注" : "阅读正文（隐藏批注）"}
       >
-        {showAnnotations ? runs.map((run) => {
-          const mine = run.authorIds.includes(userId);
-          const partner = run.authorIds.some((author) => author !== userId);
+        {(showAnnotations ? runs : plainTextRuns).map((run) => {
+          const mine = showAnnotations && run.authorIds.includes(userId);
+          const partner = showAnnotations && run.authorIds.some((author) => author !== userId);
           const mark = mine && partner
             ? "bg-violet-200 underline decoration-double decoration-violet-700"
             : mine ? "bg-blue-100 underline decoration-blue-600"
             : partner ? "bg-rose-100 underline decoration-rose-600" : "";
+          const anchor=readingAnchor;
+          if(anchor!==null && anchor>=run.start && anchor<run.end){
+            const letters=Array.from(run.text);
+            const split=anchor-run.start;
+            return <span className={mark} key={run.start}>
+              {letters.slice(0,split).join("")}
+              <span ref={positionMarkerRef}
+                role="note" aria-label="恢复的阅读位置"
+                className="inline-block h-[1em] w-0 border-l-2 border-blue-600 align-middle"/>
+              {letters.slice(split).join("")}
+            </span>;
+          }
           return <span className={mark} key={run.start}>{run.text}</span>;
-        }) : body}
+        })}
+        {readingAnchor===Array.from(body).length && (
+          <span ref={positionMarkerRef} role="note" aria-label="恢复的阅读位置"
+            className="inline-block h-[1em] w-0 border-l-2 border-blue-600 align-middle"/>
+        )}
       </div>
       </V2InkOverlay>
       {showAnnotations && selected && (
@@ -217,6 +250,12 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
           <div className="flex flex-wrap gap-2">
             <button type="button" className={buttonClass} disabled={working || !draft.trim()}
               onClick={() => { void submit(); }}>保存批注</button>
+            {onSetReadingPosition && (
+              <button type="button" className={buttonClass} disabled={working}
+                onClick={()=>onSetReadingPosition(selected.end)}>
+                记住读到此字的位置
+              </button>
+            )}
             <button type="button" className={buttonClass} disabled={working}
               onClick={() => { setSelected(null);setOperationId("");window.getSelection()?.removeAllRanges(); }}>
               取消
