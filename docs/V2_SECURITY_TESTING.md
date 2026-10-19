@@ -42,8 +42,9 @@ Migration order (isolated v2 names only):
 
 16. `supabase/migrations/20261019009000_v2_note_management.sql` adds version-checked editing, soft retraction, annotation quotas, and stricter parent-child access. See `docs/MODULE_06_ACCEPTANCE.md`.
 17. `supabase/migrations/20261019010000_v2_idempotent_book_import.sql` adds owner-only exact-match immutable paragraph retry. A retry with identical text does not charge quota; another text at the same index is rejected. PDF, EPUB and TXT are parsed locally before explicit upload consent. See `docs/MODULE_04_ACCEPTANCE.md`.
+18. `supabase/migrations/20261019011000_v2_room_lifecycle.sql` adds owner-only manual invitation revocation, pending-application withdrawal, member-only roster, applicant-only request status and the `cancelled` status. See `docs/MODULE_03_ACCEPTANCE.md`.
 
-CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_import_v2_smoke.sql` (which includes the prior access/audit smoke tests) in an **ephemeral PostgreSQL 16 service**, independent of the real Supabase database. Tests assert owner access, partner privacy, anonymous and third-user denial, two-member capacity, field immutability, private audit access, hash-chain consistency, invite rotation, owner approval, replay denial, actor-level throttling, issuance quotas, protected chunk reads, immutable owner uploads and per-user read/write limits. The frontend continues to require strict lint + TypeScript/static export.
+CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_room_lifecycle_v2_smoke.sql` (which includes the prior access/audit smoke tests) in an **ephemeral PostgreSQL 16 service**, independent of the real Supabase database. Tests assert owner access, partner privacy, anonymous and third-user denial, two-member capacity, field immutability, private audit access, hash-chain consistency, invite rotation, owner approval, replay denial, actor-level throttling, issuance quotas, protected chunk reads, immutable owner uploads and per-user read/write limits. The frontend continues to require strict lint + TypeScript/static export.
 
 ## Important limits
 
@@ -61,6 +62,7 @@ CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_import_v2_sm
 - [ ] Review SQL migration and least-privilege grants in a disposable Supabase project (not just local PostgreSQL).
 - [ ] Validate Supabase Auth user lifecycle, RLS, API schema exposure and Realtime subscriptions using two distinct real test accounts and a third unauthorized test account.
 - [x] Add owner-approved, expiring, rotating, one-use code redemption RPCs with persistent per-account throttling in the isolated V2 schema.
+- [x] Add applicant-only withdrawal and status history, owner-controlled two-step invite revocation, member-scoped two-seat roster, and cross-session async response isolation. Verified with four separate ephemeral PostgreSQL user identities.
 - [x] Add transactional account-based quotas for room creation and invitation issuance, with PostgreSQL regression tests.
 - [x] Add opt-in isolated V2 email login and owner-approval preview route (requires separate staging credentials, never activated in the normal build).
 - [ ] Confirm the preview with real Supabase Auth in a non-production environment; prevent account-farm / IP-scale guessing before public exposure.
