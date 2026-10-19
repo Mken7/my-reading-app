@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { nextSharedRevision } from "@/lib/v2/sharedActivity";
 
 /** An opaque activity revision is just a refresh cue; no content is in
  * the Realtime payload. The database enforces which annotations are visible.
@@ -19,10 +20,10 @@ export function useSharedActivity(
           .select("revision").eq("room_id", roomId).maybeSingle();
         if (closed || error) return; // Not a trusted signal of room access.
         const next = data?.revision;
-        if (typeof next === "number" && Number.isSafeInteger(next) &&
-          next > latest) {
-          latest = next;
-          setRevision(next);
+        const revised=nextSharedRevision(latest,next);
+        if(revised!==latest){
+          latest=revised;
+          setRevision(revised);
         }
       } catch {
         // Background polling is best-effort; reader interactions remain usable.
