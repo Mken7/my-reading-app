@@ -10,6 +10,7 @@
 import { addAtomicPending, listAtomicPending, recoverAtomicPending, removeAtomicPending } from "./compiled/atomicPending.js";
 import { browserAtomicPendingStore, probeBrowserDraftDatabase } from "./compiled/browserAtomicPending.js";
 import { exportEncryptedPendingBundle, importEncryptedPendingBundle } from "./compiled/portablePending.js";
+import { reconcileCursor, validReadingCursor } from "./compiled/readingProgressSync.js";
 
 const status=document.getElementById("browser-result");
 function assert(value,message) {
@@ -70,6 +71,28 @@ try {
     message(3,"shared"),"portable backup changed visible scope");
   await Promise.all([uuid(1),uuid(2),uuid(3)].map(id=>
     removeAtomicPending(browserAtomicPendingStore,scope,id)));
+  const initial={chunk_index:3,char_offset:1,revision:1};
+  const changed={chunk_index:3,char_offset:4,revision:2};
+  assert(validReadingCursor(changed),"invalid Unicode cursor rejected");
+  const result=reconcileCursor(initial,changed,{
+    chunk_index:3,char_offset:1,
+  },null);
+  assert(result.changed && result.conflict?.desired.char_offset===1 &&
+    result.conflict.remote.char_offset===4,
+    "newer remote character position silently replaced local reading point");
+  assert(!reconcileCursor(changed,initial,{chunk_index:3,char_offset:1},
+    result.conflict).changed,"out-of-order server reply downgraded local cursor");
+
+  const sender=new BroadcastChannel("reading-v2-test-invalidation");
+  const receiver=new BroadcastChannel("reading-v2-test-invalidation");
+  const received=new Promise((resolve,reject)=>{
+    receiver.onmessage=(event)=>resolve(event.data);
+    setTimeout(()=>reject(new Error("same-device progress invalidation timed out")),2000);
+  });
+  sender.postMessage("cursor-updated");
+  assert(await received==="cursor-updated","browser tabs did not receive cursor change");
+  sender.close();
+  receiver.close();
   status.textContent="BROWSER_TEST_PASS";
 } catch(error) {
   status.textContent="BROWSER_TEST_FAIL: "+String(error && error.message || error);
