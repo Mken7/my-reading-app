@@ -67,6 +67,7 @@ CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_retry_v2_smo
 - [ ] Implement actual legal erasure/retention/export workflows; soft hiding leaves the original payload in the server database.
 - [x] Add encrypted per-target pending drafts with retained client operation IDs and server-checked idempotent manual retries (not an automatic offline queue).
 - [x] Add bounded multi-item (10 per target) encrypted pending list with explicit per-item recovery and clearing; never auto-send private text.
+- [x] Add IndexedDB atomic writes, storage health checks, password-authenticated encrypted backup file transfer, real Chromium IndexedDB integration tests and no-plaintext queues.
 - [ ] Add transactional multi-tab coordination, automatic offline queue policy, accessibility alternatives and device/browser integration tests.
 - [ ] Add IP/network-aware gateway limits, anomalous-use detection and accessible challenges; preserve legitimate reading and data exports.
 - [ ] Add signed/audited off-database chain-head snapshots and explicit data-retention process.
