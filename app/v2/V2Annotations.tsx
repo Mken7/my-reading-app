@@ -6,7 +6,7 @@ import { buildOverlappingRuns, type V2HighlightRange } from "@/lib/v2/overlap";
 import { V2InkOverlay } from "./V2InkOverlay";
 import { V2NoteReplies } from "./V2NoteReplies";
 import { V2EncryptedDraft } from "./V2EncryptedDraft";
-import { removeEncryptedPending } from "@/lib/v2/draftQueue";
+import { removeEncryptedPending,browserPendingMutex } from "@/lib/v2/draftQueue";
 
 type HighlightRow = V2HighlightRange & {
   body: string;
@@ -130,7 +130,7 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
       try {
         // Only the acknowledged operation may be removed. Do not discard a
         // different unsent legacy single-slot backup for this same target.
-        await removeEncryptedPending(window.localStorage,draftScope,submissionId);
+        await removeEncryptedPending(window.localStorage,draftScope,submissionId,browserPendingMutex);
         setDraftBackupRevision((revision)=>revision+1);
       } catch {
         setMessage("批注已发送成功，但本地加密备份未能自动清理，请手动删除。");
