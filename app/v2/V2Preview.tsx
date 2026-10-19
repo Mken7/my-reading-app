@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { getV2StagingClient, v2StagingConfigured } from "@/lib/v2/staging";
 import { V2ProtectedBook } from "./V2ProtectedBook";
@@ -49,6 +49,11 @@ function readableMessage(value: unknown): string {
 export function V2Preview() {
   const client = getV2StagingClient();
   const [session, setSession] = useState<Session | null>(null);
+  // Invalidate pending room/approval responses when the authenticated user
+  // changes, and invalidate superseded refresh requests within a session.
+  const authEpochRef=useRef(0);
+  const loadEpochRef=useRef(0);
+  const currentUserRef=useRef<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
@@ -69,17 +74,22 @@ export function V2Preview() {
   useEffect(() => {
     if (!client) return;
     let active = true;
+    const initialEpoch=authEpochRef.current;
     void client.auth.getSession().then(({ data, error }) => {
-      if (!active) return;
+      if (!active || initialEpoch!==authEpochRef.current) return;
       if (error) setStatus("读取登录状态失败，请刷新测试页面。");
+      currentUserRef.current=data.session?.user.id??null;
       setSession(data.session);
       setAuthChecked(true);
     });
     const { data: { subscription } } = client.auth.onAuthStateChange(
       (_event, nextSession) => {
         if (!active) return;
-        setSession(nextSession);
-        if (!nextSession) {
+        const nextUser=nextSession?.user.id??null;
+        if(currentUserRef.current!==nextUser){
+          authEpochRef.current++;
+          loadEpochRef.current++;
+          currentUserRef.current=nextUser;
           setRooms([]);
           setRequests([]);
           setOwnRequests([]);
@@ -88,6 +98,8 @@ export function V2Preview() {
           setVisibleInvites({});
           setOpenReaderRoomId(null);
         }
+        setSession(nextSession);
+        setAuthChecked(true);
       },
     );
     return () => {
@@ -98,12 +110,18 @@ export function V2Preview() {
 
   const loadRooms = useCallback(async () => {
     if (!client || !session) return;
+    const authEpoch=authEpochRef.current;
+    const loadEpoch=++loadEpochRef.current;
+    const stillCurrent=()=>authEpoch===authEpochRef.current &&
+      loadEpoch===loadEpochRef.current &&
+      currentUserRef.current===session.user.id;
     setLoadingRooms(true);
     const { data, error } = await client
       .from("reading_rooms_v2")
       .select("id,owner_id,title,state,created_at")
       .order("created_at", { ascending: false })
       .limit(100);
+    if(!stillCurrent())return;
     if (error) {
       setRooms([]);
       setRequests([]);
@@ -118,6 +136,7 @@ export function V2Preview() {
     // Each request is scoped to auth.uid() inside a SECURITY DEFINER RPC;
     // never expose an invitation code, applicant email or invite secret.
     const personal = await client.rpc("v2_my_join_requests");
+    if(!stillCurrent())return;
     if(personal.error){
       setOwnRequests([]);
       setStatus("申请记录暂时无法同步，请检查 V2 数据库迁移或网络。");
@@ -128,6 +147,7 @@ export function V2Preview() {
       const membership=await client.from("reading_members_v2")
         .select("room_id,role").in("room_id",nextRooms.map(room=>room.id))
         .is("left_at",null).limit(200);
+      if(!stillCurrent())return;
       if(membership.error){
         setMemberCounts({});
         setStatus("房间成员数量暂时不可用。");
@@ -150,6 +170,7 @@ export function V2Preview() {
         .in("room_id", mine)
         .eq("status", "pending")
         .order("requested_at", { ascending: true });
+      if(!stillCurrent())return;
       if (response.error) {
         setStatus("获取待审批请求失败，请检查测试项目权限。");
       }
