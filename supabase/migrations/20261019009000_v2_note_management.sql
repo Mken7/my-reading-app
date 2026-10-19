@@ -183,6 +183,51 @@ BEGIN
 END;
 $$;
 
+-- The reply submit RPC must check that the parent is still available.
+-- Even a previously accepted operation must not append to a retracted parent.
+CREATE OR REPLACE FUNCTION public.v2_submit_reply(
+  target_room uuid,target_note uuid,target_body text,target_operation uuid
+)
+RETURNS text LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=''
+AS $
+DECLARE actor uuid:=auth.uid();
+  original public.reading_note_replies_v2%ROWTYPE;
+  inserted_id uuid;
+BEGIN
+  IF actor IS NULL OR target_room IS NULL OR target_note IS NULL
+    OR target_operation IS NULL OR target_body IS NULL
+    OR pg_catalog.char_length(pg_catalog.btrim(target_body)) NOT BETWEEN 1 AND 2000
+    OR NOT public.v2_can_edit_room(target_room) THEN RETURN 'denied'; END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.reading_highlights_v2 h
+    WHERE h.room_id=target_room AND h.id=target_note
+      AND h.hidden_at IS NULL
+      AND (h.author_id=actor OR h.visibility='shared')
+  ) THEN RETURN 'denied'; END IF;
+  SELECT * INTO original FROM public.reading_note_replies_v2 r
+    WHERE r.room_id=target_room AND r.author_id=actor
+      AND r.client_operation_id=target_operation;
+  IF FOUND THEN RETURN CASE
+    WHEN original.hidden_at IS NOT NULL THEN 'withdrawn'
+    WHEN original.highlight_id=target_note AND original.body=target_body
+      THEN 'already_saved' ELSE 'conflict' END; END IF;
+  INSERT INTO public.reading_note_replies_v2(
+    room_id,highlight_id,author_id,body,client_operation_id
+  ) VALUES(target_room,target_note,actor,target_body,target_operation)
+  ON CONFLICT (room_id,author_id,client_operation_id) DO NOTHING
+  RETURNING id INTO inserted_id;
+  IF inserted_id IS NOT NULL THEN RETURN 'saved'; END IF;
+  SELECT * INTO original FROM public.reading_note_replies_v2 r
+    WHERE r.room_id=target_room AND r.author_id=actor
+      AND r.client_operation_id=target_operation;
+  RETURN CASE
+    WHEN NOT FOUND THEN 'conflict'
+    WHEN original.hidden_at IS NOT NULL THEN 'withdrawn'
+    WHEN original.highlight_id=target_note AND original.body=target_body
+      THEN 'already_saved' ELSE 'conflict' END;
+END;
+$;
+
 -- Replays of the original submission cannot resurrect a withdrawn note.
 CREATE OR REPLACE FUNCTION public.v2_submit_highlight(
   target_room uuid,target_chunk integer,target_start integer,
