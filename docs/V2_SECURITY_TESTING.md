@@ -33,8 +33,9 @@ Migration order (isolated v2 names only):
 
 8. `supabase/migrations/20261019001000_v2_ink.sql` adds normalized and bounded circle/arrow/stroke shapes with private/shared membership checks and hash-chain audit.
 9. `supabase/migrations/20261019002000_v2_note_replies.sql` adds visibility-inherited text note replies, strict per-note limits and audit. See `docs/V2_INK_AND_REPLIES.md`.
+10. `supabase/migrations/20261019003000_v2_text_relative_ink.sql` adds optional Unicode text range anchors for new strokes, retaining nullable legacy shapes. The ink audit digest includes the anchor range, and database guards reject half-empty or out-of-range anchors.
 
-CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_replies_v2_smoke.sql` (which includes the prior access/audit smoke tests) in an **ephemeral PostgreSQL 16 service**, independent of the real Supabase database. Tests assert owner access, partner privacy, anonymous and third-user denial, two-member capacity, field immutability, private audit access, hash-chain consistency, invite rotation, owner approval, replay denial, actor-level throttling, issuance quotas, protected chunk reads, immutable owner uploads and per-user read/write limits. The frontend continues to require strict lint + TypeScript/static export.
+CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_text_anchor_v2_smoke.sql` (which includes the prior access/audit smoke tests) in an **ephemeral PostgreSQL 16 service**, independent of the real Supabase database. Tests assert owner access, partner privacy, anonymous and third-user denial, two-member capacity, field immutability, private audit access, hash-chain consistency, invite rotation, owner approval, replay denial, actor-level throttling, issuance quotas, protected chunk reads, immutable owner uploads and per-user read/write limits. The frontend continues to require strict lint + TypeScript/static export.
 
 ## Important limits
 
@@ -58,7 +59,9 @@ CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_replies_v2_s
 - [x] Add limited-size member-only content RPC and per-user database read/upload quotas, verified with isolated PostgreSQL tests.
 - [x] Add chapter indexes, per-account reading progress with stale-device conflict detection, and independently overlapping private/shared text notes, with isolated database and Unicode tests.
 - [x] Add bounded hand-drawn circles/arrows/strokes and private/shared threaded replies with isolated SQL and geometry tests.
-- [ ] Add precise cross-layout drawing anchors, existing ink/reply deletion/export, offline queues, accessibility alternatives and device/browser integration tests.
+- [x] Introduce optional text-relative anchored ink with legacy-stroke compatibility, Unicode/emoji range tests and paragraph reflow recalculation.
+- [ ] Validate actual reflow positioning on iOS/Android and multi-line selections; the current bounding-box implementation can distort curved ink after line wrapping.
+- [ ] Add existing ink/reply deletion/export, offline queues, accessibility alternatives and device/browser integration tests.
 - [ ] Add IP/network-aware gateway limits, anomalous-use detection and accessible challenges; preserve legitimate reading and data exports.
 - [ ] Add signed/audited off-database chain-head snapshots and explicit data-retention process.
 - [ ] Add monitoring and rollback plans and rehearse restore on synthetic data.
