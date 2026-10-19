@@ -164,6 +164,52 @@ BEGIN
 END $blocked_invite$;
 RESET ROLE;
 
+-- Rate limit persists across invalid requests and ignored repeated reports.
+SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000014',false);
+SET ROLE authenticated;
+DO $request_limits$
+BEGIN
+  PERFORM public.v2_request_discovered_room(NULL);
+  PERFORM public.v2_request_discovered_room(NULL);
+  IF public.v2_request_discovered_room(NULL) <> 'rate_limited' THEN
+    RAISE EXCEPTION 'requests were not rate limited across absent room IDs';
+  END IF;
+END $request_limits$;
+RESET ROLE;
+
+SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000012',false);
+SET ROLE authenticated;
+DO $report_limits$
+DECLARE i integer; outcome text; room uuid:=current_setting('test.blocked_room')::uuid;
+BEGIN
+ FOR i IN 1..4 LOOP
+  outcome:=public.v2_report_discovery_room(room,'privacy',
+    'Privacy complaint with no included book text.');
+  IF outcome<>'submitted' THEN
+    RAISE EXCEPTION 'reports under the daily limit rejected: %',outcome;
+  END IF;
+ END LOOP;
+ IF public.v2_report_discovery_room(room,'privacy',
+   'Sixth report exceeds the daily limit')<>'rate_limited' THEN
+  RAISE EXCEPTION 'report quota bypassed';
+ END IF;
+END $report_limits$;
+RESET ROLE;
+
+SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000013',false);
+SET ROLE authenticated;
+DO $withdraw_publication$
+DECLARE room uuid:=current_setting('test.blocked_room')::uuid;
+BEGIN
+ IF NOT public.v2_set_room_listing(room,'','',false) THEN
+  RAISE EXCEPTION 'owner cannot unlist room'; END IF;
+ IF EXISTS(SELECT 1 FROM public.v2_my_room_listings()
+   WHERE room_id=room AND listed) THEN
+  RAISE EXCEPTION 'unlisting left room discoverable';
+ END IF;
+END $withdraw_publication$;
+RESET ROLE;
+
 SET ROLE anon;
 DO $unauth$
 BEGIN
