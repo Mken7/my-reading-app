@@ -38,6 +38,7 @@ export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Pr
   const [notice, setNotice] = useState("");
   const [pendingHide, setPendingHide] = useState<string | null>(null);
   const draftScope = { userId, roomId, kind: "reply" as const, targetId: noteId };
+  const [draftBackupRevision,setDraftBackupRevision] = useState(0);
 
   const load = useCallback(async () => {
     const { data, error } = await client.from("reading_note_replies_v2")
@@ -74,6 +75,7 @@ export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Pr
       setNotice("回复已保存。");
       try {
         await removeEncryptedDraft(window.localStorage,draftScope);
+        setDraftBackupRevision((revision)=>revision+1);
       } catch {
         setNotice("回复已保存，但本机加密备份未清除，请手动删除。");
       }
@@ -159,6 +161,7 @@ export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Pr
           </form>
           <V2EncryptedDraft
             scope={draftScope}
+            refreshToken={draftBackupRevision}
             draftValue={draft.trim().length>0 ? draft : ""}
             disabled={busy}
             onRestore={(plaintext) => {
