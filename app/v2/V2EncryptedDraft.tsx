@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import {
   hasEncryptedDraft, recoverEncryptedDraft, removeEncryptedDraft,
   saveEncryptedDraft, type DraftScope,
@@ -11,6 +11,7 @@ import {
 } from "@/lib/v2/draftQueue";
 import { addAtomicPending,inspectAtomicPending,recoverAtomicPending,removeAtomicPending } from "@/lib/v2/atomicPending";
 import { browserAtomicPendingStore,probeBrowserDraftDatabase } from "@/lib/v2/browserAtomicPending";
+import { exportEncryptedPendingBundle,importEncryptedPendingBundle } from "@/lib/v2/portablePending";
 import {
   inspectDraftStorage, requestDraftPersistence,
   type DraftStorageHealth,
@@ -126,6 +127,54 @@ export function V2EncryptedDraft({
       ));
     } finally {
       setHealthBusy(false);
+    }
+  }
+
+  async function exportPortable() {
+    if (busy || disabled) return;
+    setBusy(true);
+    try {
+      const content=await exportEncryptedPendingBundle(browserAtomicPendingStore,scope);
+      const blob=new Blob([content],{type:"application/json"});
+      const url=URL.createObjectURL(blob);
+      const link=document.createElement("a");
+      link.href=url;
+      link.download="reading-v2-encrypted-backup.json";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(()=>URL.revokeObjectURL(url),2000);
+      setMessage("已生成加密备份文件。文件含密文和随机编号；请安全保存并另行记住解锁口令。");
+    } catch(error) {
+      setMessage(error instanceof Error ? error.message : "导出加密备份失败");
+    } finally {setBusy(false);}
+  }
+
+  async function importPortable(event:ChangeEvent<HTMLInputElement>) {
+    const input=event.currentTarget;
+    const file=input.files?.[0];
+    input.value="";
+    if (!file || busy || disabled) return;
+    if (password.length<12) {
+      setMessage("导入前请先输入至少 12 字符的解锁口令，以验证文件密文属于当前书房。");
+      return;
+    }
+    setBusy(true);
+    try {
+      if (file.size>175000) throw new Error("文件过大，已拒绝导入");
+      const content=await file.text();
+      const added=await importEncryptedPendingBundle(
+        browserAtomicPendingStore,scope,content,password,
+      );
+      const report=await inspectAtomicPending(browserAtomicPendingStore,scope);
+      setDurableIds(report.ids);
+      setDamagedIds(report.damagedIds);
+      setMessage("成功验证并导入 "+added+" 条加密草稿；没有自动发送任何内容。");
+    } catch(error) {
+      setMessage(error instanceof Error ? error.message : "导入失败；未提交任何新记录");
+    } finally {
+      setPassword("");
+      setBusy(false);
     }
   }
 
@@ -274,7 +323,10 @@ export function V2EncryptedDraft({
 
   return (
     <details open={expanded}
-      onToggle={(event)=>setExpanded(event.currentTarget.open)}
+      onToggle={(event)=>{
+        setExpanded(event.currentTarget.open);
+        if (!event.currentTarget.open) setPassword("");
+      }}
       className="mt-2 rounded-lg border border-[#d7d0c5] bg-white/70 p-2">
       <summary className="cursor-pointer text-xs">
         本机加密草稿 {hasBackup ? "· 有备份" : "· 未备份"}
@@ -356,6 +408,27 @@ export function V2EncryptedDraft({
             检测到 {damagedIds.length} 条密文格式异常，已保留供手动确认清除；
             其它草稿仍可尝试恢复。
           </p>}
+          <div className="mt-2 rounded-lg border border-[#d7d0c5] p-2">
+            <p className="text-xs font-medium">跨设备手动迁移（仅加密文件）</p>
+            <p className="my-1 text-xs text-[#817668]">
+              导出只包含密文和随机编号。另一台设备须用同一个阅读账号、
+              同一个书房及笔记位置，并输入原口令才能导入。
+              导入验证通过后仍需要逐条手动发送。
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" disabled={busy || disabled || durableIds.length===0}
+                className="rounded-lg border px-2 py-1 text-xs disabled:opacity-50"
+                onClick={()=>{void exportPortable();}}>
+                导出加密备份文件
+              </button>
+              <label className="cursor-pointer rounded-lg border px-2 py-1 text-xs">
+                验证口令并导入文件
+                <input type="file" className="sr-only" accept=".json,application/json"
+                  disabled={busy || disabled}
+                  onChange={(event)=>{void importPortable(event);}}/>
+              </label>
+            </div>
+          </div>
           {durableIds.length===0 && <p className="mt-2 text-xs">暂无可靠待发送记录。</p>}
           <div className="mt-2 space-y-2">
             {durableIds.map((id,index)=>(
