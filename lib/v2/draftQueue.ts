@@ -13,6 +13,29 @@ import {
 } from "./encryptedDraft.ts";
 
 export const MAX_PENDING_PER_TARGET = 10;
+
+/**
+ * A mutex must work across browser tabs for the SAME origin. The Web Locks
+ * API provides that guarantee while localStorage alone does not. The queue
+ * refuses mutations on browsers lacking Web Locks instead of risking loss.
+ */
+export type PendingMutex = <T>(name: string, run: () => Promise<T>) => Promise<T>;
+
+export const browserPendingMutex: PendingMutex = (name, run) => {
+  if (typeof navigator === "undefined" || !navigator.locks?.request) {
+    return Promise.reject(new Error(
+      "当前浏览器不支持安全的多标签草稿编辑；可读取旧备份，但不能新增或清除队列项"
+    ));
+  }
+  return navigator.locks.request(name, run);
+};
+
+async function withIndexLock<T>(
+  scope: DraftScope, mutex: PendingMutex, run: () => Promise<T>,
+): Promise<T> {
+  const name = "reading-v2-queue-lock:" + await indexKey(scope);
+  return mutex(name, run);
+}
 const INDEX_PREFIX = "reading-v2-pending-index-v1:";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -84,27 +107,32 @@ export async function listEncryptedPending(
  */
 export async function addEncryptedPending(
   storage: DraftStorage,scope: DraftScope,plaintext: string,passphrase: string,
+  mutex: PendingMutex,
 ): Promise<string> {
-  const id=pendingOperationId(plaintext,scope.kind);
-  const existing=await readIndex(storage,scope);
-  if (existing.includes(id)) {
-    const saved=await recoverEncryptedDraft(storage,itemScope(scope,id),passphrase);
-    if (saved!==plaintext) throw new Error("同一发送编号已有不同内容，不能覆盖原待发送项");
+  // Read, quota-check, encrypt and publish while holding the SAME origin-wide
+  // lock. Without it two tabs can both read the old index and lose one item.
+  return withIndexLock(scope,mutex,async () => {
+    const id=pendingOperationId(plaintext,scope.kind);
+    const existing=await readIndex(storage,scope);
+    if (existing.includes(id)) {
+      const saved=await recoverEncryptedDraft(storage,itemScope(scope,id),passphrase);
+      if (saved!==plaintext) throw new Error("同一发送编号已有不同内容，不能覆盖原待发送项");
+      return id;
+    }
+    if (existing.length>=MAX_PENDING_PER_TARGET) {
+      throw new Error("此位置最多保留 10 条加密待发送项，请先处理旧记录");
+    }
+    const item=itemScope(scope,id);
+    // Encryption/storage must finish before the index publishes the new item.
+    await saveEncryptedDraft(storage,item,plaintext,passphrase);
+    try {
+      await writeIndex(storage,scope,[...existing,id]);
+    } catch {
+      try { await removeEncryptedDraft(storage,item); } catch { /* best effort */ }
+      throw new Error("待发送目录更新失败；草稿可能未保存，请检查浏览器容量");
+    }
     return id;
-  }
-  if (existing.length>=MAX_PENDING_PER_TARGET) {
-    throw new Error("此位置最多保留 10 条加密待发送项，请先处理旧记录");
-  }
-  const item=itemScope(scope,id);
-  // Encryption/storage must finish before the index publishes the new item.
-  await saveEncryptedDraft(storage,item,plaintext,passphrase);
-  try {
-    await writeIndex(storage,scope,[...existing,id]);
-  } catch {
-    try { await removeEncryptedDraft(storage,item); } catch { /* best effort */ }
-    throw new Error("待发送目录更新失败；草稿可能未保存，请检查浏览器容量");
-  }
-  return id;
+  });
 }
 
 export async function recoverEncryptedPending(
@@ -122,12 +150,15 @@ export async function recoverEncryptedPending(
 
 export async function removeEncryptedPending(
   storage: DraftStorage,scope: DraftScope,id: string,
+  mutex: PendingMutex,
 ): Promise<void> {
-  const normalized=id.toLowerCase();
-  const items=await readIndex(storage,scope);
-  if (!items.includes(normalized)) return;
-  // Removing ciphertext first avoids accidentally losing track of a retained
-  // plaintext-sensitive item if browser storage raises a quota/security error.
-  await removeEncryptedDraft(storage,itemScope(scope,normalized));
-  await writeIndex(storage,scope,items.filter(item=>item!==normalized));
+  return withIndexLock(scope,mutex,async () => {
+    const normalized=id.toLowerCase();
+    const items=await readIndex(storage,scope);
+    if (!items.includes(normalized)) return;
+    // Keep removal and index rewrite under one cross-tab lock. Remove the
+    // ciphertext first to avoid leaving a decryptable orphan after failure.
+    await removeEncryptedDraft(storage,itemScope(scope,normalized));
+    await writeIndex(storage,scope,items.filter(item=>item!==normalized));
+  });
 }
