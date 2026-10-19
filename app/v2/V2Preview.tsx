@@ -92,7 +92,7 @@ export function V2Preview() {
       (event, nextSession) => {
         if (!active) return;
         const outcome=authEventView(event,recoveryActiveRef.current);
-        if(outcome==="password_reset"){
+        if(outcome==="begin_recovery"){
           recoveryActiveRef.current=true;
           setRecoveryActive(true);
           setPassword("");
