@@ -216,4 +216,40 @@ BEGIN
   END;
 END $anonymous$;
 RESET ROLE;
+
+-- A separate room demonstrates the quota without altering earlier audit
+-- counts. Direct insert privileges are still bounded by the server trigger.
+INSERT INTO auth.users(id) VALUES('00000000-0000-4000-8000-00000000000f');
+SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-00000000000f',false);
+SET ROLE authenticated;
+SELECT public.v2_create_reading_room('Bounded overlapping text notes') AS quota_room \gset
+SELECT set_config('test.quota_room',:'quota_room',false);
+DO $quota$
+DECLARE room uuid:=current_setting('test.quota_room')::uuid;
+  i integer;
+BEGIN
+  IF NOT public.v2_upload_book_chunk(room,0,'甲😀乙') THEN
+    RAISE EXCEPTION 'could not upload quota test paragraph';
+  END IF;
+  FOR i IN 1..60 LOOP
+    INSERT INTO public.reading_highlights_v2(
+      room_id,chunk_index,author_id,start_index,end_index,body,visibility
+    ) VALUES(room,0,'00000000-0000-4000-8000-00000000000f',
+      0,3,'test note '||i,'private');
+  END LOOP;
+  BEGIN
+    INSERT INTO public.reading_highlights_v2(
+      room_id,chunk_index,author_id,start_index,end_index,body,visibility
+    ) VALUES(room,0,'00000000-0000-4000-8000-00000000000f',
+      0,3,'overflow','private');
+    RAISE EXCEPTION 'per-user note quota was exceeded';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  IF (SELECT count(*) FROM public.reading_highlights_v2
+    WHERE room_id=room)<>60 THEN
+    RAISE EXCEPTION 'unexpected count after cap of sixty';
+  END IF;
+END $quota$;
+RESET ROLE;
+
 \echo 'PASS: private overlapping note edit/replies, CAS, tombstone, audit and visibility'
