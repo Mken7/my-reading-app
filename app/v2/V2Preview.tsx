@@ -278,7 +278,8 @@ export function V2Preview() {
   }
 
   async function resendVerification(){
-    if(!client || busy || !email.trim())return;
+    const resendEmail=session?.user.email??email.trim();
+    if(!client || busy || !resendEmail)return;
     setBusy(true);
     try{
       const redirectTo=recoveryReturnUrl(window.location.href);
@@ -287,7 +288,7 @@ export function V2Preview() {
         return;
       }
       const {error}=await client.auth.resend({
-        type:"signup",email:email.trim(),options:{emailRedirectTo:redirectTo},
+        type:"signup",email:resendEmail,options:{emailRedirectTo:redirectTo},
       });
       setStatus(error
         ?"验证邮件请求未完成，请稍后再试。"
@@ -297,6 +298,33 @@ export function V2Preview() {
     }finally{
       setBusy(false);
     }
+  }
+
+  async function refreshVerification(){
+    if(!client || busy || !session)return;
+    setBusy(true);
+    try{
+      const {data,error}=await client.auth.getUser();
+      if(error || !data.user || data.user.id!==session.user.id){
+        setStatus("不能确认当前邮箱验证状态，请重新登录或稍后再试。");
+        return;
+      }
+      if(!data.user.email_confirmed_at){
+        setStatus("邮箱尚未完成确认，请使用验证邮件中的链接。");
+        return;
+      }
+      const {data:renewed,error:refreshError}=await client.auth.refreshSession();
+      if(refreshError || !renewed.session ||
+         renewed.session.user.id!==session.user.id ||
+         !renewed.session.user.email_confirmed_at){
+        setStatus("邮箱已验证，但会话更新未完成。请退出后重新登录。");
+      }else{
+        setSession(renewed.session);
+        setStatus("邮箱已验证，测试阅读权限现已开放。");
+      }
+    }catch{
+      setStatus("验证状态检查失败，请稍后重试。");
+    }finally{setBusy(false);}
   }
 
   async function finishRecovery(event: FormEvent<HTMLFormElement>){
@@ -573,6 +601,27 @@ export function V2Preview() {
           放弃重设并退出
         </button>
         {status && <p role="status" className="mt-4 text-sm text-[#76563a]">{status}</p>}
+      </section>
+    );
+  }
+
+  if(!session.user.email_confirmed_at){
+    return (
+      <section className="max-w-md rounded-2xl border border-[#d9d0c1] bg-white/80 p-6 shadow-sm">
+        <h2 className="font-serif text-xl">请先确认测试邮箱</h2>
+        <p className="mt-3 text-sm leading-7 text-[#6b6560]">
+          当前账号尚未完成邮箱验证；在确认之前不会展示受保护书房。
+          仅通过邮件验证不能代替服务器端身份/权限判断。
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button type="button" className={buttonClass} disabled={busy}
+            onClick={()=>{void resendVerification();}}>重新申请验证邮件</button>
+          <button type="button" className={secondaryButtonClass} disabled={busy}
+            onClick={()=>{void refreshVerification();}}>我已验证，检查状态</button>
+          <button type="button" className={secondaryButtonClass} disabled={busy}
+            onClick={()=>{void logout();}}>退出账号</button>
+        </div>
+        {status && <p role="status" className="mt-3 text-sm text-[#76563a]">{status}</p>}
       </section>
     );
   }
