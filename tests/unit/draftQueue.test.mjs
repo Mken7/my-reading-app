@@ -129,7 +129,7 @@ test("two tabs concurrently add different encrypted notes without lost updates",
     addEncryptedPending(local,scope,item(uuid(23)),passphrase),
   ]);
   const ids=await listEncryptedPending(local,scope);
-  assert.deepEqual(ids,[uuid(21),uuid(22),uuid(23)]);
+  assert.deepEqual([...ids].sort(),[uuid(21),uuid(22),uuid(23)].sort());
   for(const id of ids) {
     assert.equal(await recoverEncryptedPending(local,scope,id,passphrase),item(id));
   }
