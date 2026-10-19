@@ -1,9 +1,29 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  addEncryptedPending,listEncryptedPending,recoverEncryptedPending,
-  removeEncryptedPending,MAX_PENDING_PER_TARGET,
+  addEncryptedPending as addPending,listEncryptedPending,recoverEncryptedPending,
+  removeEncryptedPending as removePending,MAX_PENDING_PER_TARGET,
 } from "../../lib/v2/draftQueue.ts";
+
+// Models origin-wide Web Locks: all simulated tabs serialize operations on
+// the same hashed queue name, but independent targets can run concurrently.
+const locks=new Map();
+async function mutex(name,run) {
+  const preceding=locks.get(name)??Promise.resolve();
+  let unlock=()=>{};
+  const current=new Promise((resolve)=>{unlock=resolve;});
+  locks.set(name,current);
+  await preceding;
+  try { return await run(); }
+  finally {
+    unlock();
+    if(locks.get(name)===current) locks.delete(name);
+  }
+}
+const addEncryptedPending=(storage,scope,text,password)=>
+  addPending(storage,scope,text,password,mutex);
+const removeEncryptedPending=(storage,scope,id)=>
+  removePending(storage,scope,id,mutex);
 
 const passphrase="a-unique-safely-stored-test-passphrase";
 const scope={userId:"user-1",roomId:"room-1",kind:"highlight",targetId:"42"};
@@ -97,4 +117,42 @@ test("rejects invalid UUID, missing privacy metadata or nonexistent encrypted re
     v:2,body:"some text",operationId:uuid(6),start:0,end:2,visibility:"public",
   }),passphrase),/隐私状态/);
   assert.equal(await recoverEncryptedPending(local,scope,uuid(9),passphrase),null);
+});
+
+
+test("two tabs concurrently add different encrypted notes without lost updates",async()=>{
+  const local=storage();
+  // Each tab starts before the first encryption can finish.
+  await Promise.all([
+    addEncryptedPending(local,scope,item(uuid(21)),passphrase),
+    addEncryptedPending(local,scope,item(uuid(22)),passphrase),
+    addEncryptedPending(local,scope,item(uuid(23)),passphrase),
+  ]);
+  const ids=await listEncryptedPending(local,scope);
+  assert.deepEqual(ids,[uuid(21),uuid(22),uuid(23)]);
+  for(const id of ids) {
+    assert.equal(await recoverEncryptedPending(local,scope,id,passphrase),item(id));
+  }
+});
+
+test("one tab removes while another appends, preserving unaffected ciphertext",async()=>{
+  const local=storage();
+  await addEncryptedPending(local,scope,item(uuid(31)),passphrase);
+  await addEncryptedPending(local,scope,item(uuid(32)),passphrase);
+  await Promise.all([
+    removeEncryptedPending(local,scope,uuid(31)),
+    addEncryptedPending(local,scope,item(uuid(33)),passphrase),
+  ]);
+  assert.deepEqual(await listEncryptedPending(local,scope),[uuid(32),uuid(33)]);
+  assert.equal(await recoverEncryptedPending(local,scope,uuid(32),passphrase),item(uuid(32)));
+  assert.equal(await recoverEncryptedPending(local,scope,uuid(33),passphrase),item(uuid(33)));
+});
+
+test("unsafe queue mutations require a mutex and refuse to proceed without one",async()=>{
+  const local=storage();
+  await assert.rejects(
+    addPending(local,scope,item(uuid(40)),passphrase,undefined),
+    /not a function/,
+  );
+  assert.equal(local.records.size,0);
 });
