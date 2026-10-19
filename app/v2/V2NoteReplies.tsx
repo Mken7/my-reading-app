@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { V2EncryptedDraft } from "./V2EncryptedDraft";
 import { removeEncryptedDraft } from "@/lib/v2/encryptedDraft";
+import { removeEncryptedPending } from "@/lib/v2/draftQueue";
 
 type Reply = {
   id: string;
@@ -80,6 +81,7 @@ export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Pr
         ? "服务器确认这条回复已经发送过，没有产生重复记录。"
         : "回复已保存。");
       try {
+        await removeEncryptedPending(window.localStorage,draftScope,submissionId);
         await removeEncryptedDraft(window.localStorage,draftScope);
         setDraftBackupRevision((revision)=>revision+1);
       } catch {
