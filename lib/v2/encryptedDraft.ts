@@ -23,6 +23,12 @@ const MAX_ENVELOPE_CHARS = 16000;
 const coder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
+function cryptoBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer=new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
+}
+
 type Envelope = { v: 1; iterations: number; salt: string; iv: string; ciphertext: string };
 
 function assertScope(scope: DraftScope) {
@@ -57,16 +63,16 @@ async function keyFor(passphrase: string, salt: Uint8Array): Promise<CryptoKey> 
     throw new Error("解锁口令需要 12–128 个字符");
   }
   const material = await crypto.subtle.importKey(
-    "raw",coder.encode(passphrase),"PBKDF2",false,["deriveKey"]
+    "raw",cryptoBuffer(coder.encode(passphrase)),"PBKDF2",false,["deriveKey"]
   );
   return crypto.subtle.deriveKey(
-    { name:"PBKDF2",salt:Uint8Array.from(salt),iterations:ITERATIONS,hash:"SHA-256" },
+    { name:"PBKDF2",salt:cryptoBuffer(salt),iterations:ITERATIONS,hash:"SHA-256" },
     material,{ name:"AES-GCM",length:256 },false,["encrypt","decrypt"],
   );
 }
 
 export async function encryptedDraftKey(scope: DraftScope): Promise<string> {
-  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256",scopeBytes(scope)));
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256",cryptoBuffer(scopeBytes(scope))));
   return PREFIX + bytesToBase64(hash).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/g,"");
 }
 
@@ -88,7 +94,7 @@ export async function saveEncryptedDraft(
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await keyFor(passphrase,salt);
   const encrypted = new Uint8Array(await crypto.subtle.encrypt(
-    { name:"AES-GCM",iv,additionalData:scopeBytes(scope) },key,bytes,
+    { name:"AES-GCM",iv:cryptoBuffer(iv),additionalData:cryptoBuffer(scopeBytes(scope)) },key,cryptoBuffer(bytes),
   ));
   const record: Envelope = {
     v:1,iterations:ITERATIONS,
@@ -125,8 +131,8 @@ export async function recoverEncryptedDraft(
   try {
     const key = await keyFor(passphrase,salt);
     const value = await crypto.subtle.decrypt(
-      {name:"AES-GCM",iv:Uint8Array.from(iv),additionalData:scopeBytes(scope)},
-      key,Uint8Array.from(cipher),
+      {name:"AES-GCM",iv:cryptoBuffer(iv),additionalData:cryptoBuffer(scopeBytes(scope))},
+      key,cryptoBuffer(cipher),
     );
     return decoder.decode(value);
   } catch {
