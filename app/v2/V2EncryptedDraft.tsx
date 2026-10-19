@@ -9,7 +9,7 @@ import {
   addEncryptedPending,listEncryptedPending,recoverEncryptedPending,
   removeEncryptedPending,browserPendingMutex,
 } from "@/lib/v2/draftQueue";
-import { addAtomicPending,listAtomicPending,recoverAtomicPending,removeAtomicPending } from "@/lib/v2/atomicPending";
+import { addAtomicPending,inspectAtomicPending,recoverAtomicPending,removeAtomicPending } from "@/lib/v2/atomicPending";
 import { browserAtomicPendingStore,probeBrowserDraftDatabase } from "@/lib/v2/browserAtomicPending";
 import {
   inspectDraftStorage, requestDraftPersistence,
@@ -38,6 +38,7 @@ export function V2EncryptedDraft({
   const [message,setMessage] = useState("");
   const [pendingIds,setPendingIds] = useState<string[]>([]);
   const [durableIds,setDurableIds] = useState<string[]>([]);
+  const [damagedIds,setDamagedIds] = useState<string[]>([]);
   const [confirmRemove,setConfirmRemove] = useState<string | null>(null);
   const [health,setHealth] = useState<DraftStorageHealth | null>(null);
   const [healthBusy,setHealthBusy] = useState(false);
@@ -56,9 +57,11 @@ export function V2EncryptedDraft({
       setMessage("浏览器本地存储不可用，请勿依赖离线备份。");
     }
     try {
-      setDurableIds(await listAtomicPending(browserAtomicPendingStore,{
+      const inventory=await inspectAtomicPending(browserAtomicPendingStore,{
         userId,roomId,kind,targetId,
-      }));
+      });
+      setDurableIds(inventory.ids);
+      setDamagedIds(inventory.damagedIds);
     } catch {
       setMessage("IndexedDB 暂不可用。旧版加密备份仍可单独恢复；请勿清理网站数据。");
     }
@@ -131,7 +134,9 @@ export function V2EncryptedDraft({
     setBusy(true);
     try {
       await addAtomicPending(browserAtomicPendingStore,scope,draftValue,password);
-      setDurableIds(await listAtomicPending(browserAtomicPendingStore,scope));
+      const inventory=await inspectAtomicPending(browserAtomicPendingStore,scope);
+      setDurableIds(inventory.ids);
+      setDamagedIds(inventory.damagedIds);
       setMessage("已加密写入 IndexedDB；恢复后仍需要亲自确认发送。");
     } catch(error) {
       setMessage(error instanceof Error ? error.message : "IndexedDB 加密写入失败");
@@ -162,7 +167,9 @@ export function V2EncryptedDraft({
     setBusy(true);
     try {
       await removeAtomicPending(browserAtomicPendingStore,scope,id);
-      setDurableIds(await listAtomicPending(browserAtomicPendingStore,scope));
+      const inventory=await inspectAtomicPending(browserAtomicPendingStore,scope);
+      setDurableIds(inventory.ids);
+      setDamagedIds(inventory.damagedIds);
       setMessage("已删除选中的 IndexedDB 草稿，其余记录不受影响。");
     } catch(error) {
       setMessage(error instanceof Error ? error.message : "删除本机草稿失败");
@@ -342,12 +349,20 @@ export function V2EncryptedDraft({
           <p className="mt-1 text-xs text-[#817668]">
             IndexedDB 原子存储，只展示序号；密文需要口令才能解锁。
             浏览器清理网站数据仍会丢失草稿。
+            检测出受损密文时不会自动清除，也不会隐藏其它正常草稿。
           </p>
+          {damagedIds.length>0 && <p role="status"
+            className="mt-2 text-xs text-[#9a512d]">
+            检测到 {damagedIds.length} 条密文格式异常，已保留供手动确认清除；
+            其它草稿仍可尝试恢复。
+          </p>}
           {durableIds.length===0 && <p className="mt-2 text-xs">暂无可靠待发送记录。</p>}
           <div className="mt-2 space-y-2">
             {durableIds.map((id,index)=>(
               <div key={id} className="flex flex-wrap items-center gap-2 rounded-lg border border-[#ddd6cd] p-2">
-                <span className="mr-auto text-xs">可靠草稿 {index+1}</span>
+                <span className="mr-auto text-xs">
+                  可靠草稿 {index+1}{damagedIds.includes(id) ? " · 密文异常" : ""}
+                </span>
                 <button type="button" className="rounded-lg border px-2 py-1 text-xs disabled:opacity-50"
                   disabled={busy || disabled || password.length<12}
                   onClick={()=>{void restoreDurable(id);}}>输入口令恢复</button>
