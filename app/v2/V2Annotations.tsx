@@ -99,6 +99,7 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
     if (start >= end || end > Array.from(body).length) return;
     const quote = Array.from(body).slice(start,end).join("");
     if (!quote.trim()) return;
+    if (selected?.start === start && selected?.end === end) return;
     setSelected({ start,end,quote });
     setOperationId(crypto.randomUUID());
   }
@@ -178,6 +179,10 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
       {showAnnotations && selected && (
         <div className="mt-3 space-y-3 rounded-lg border border-[#d6c8b4] bg-[#f5efe4] p-3">
           <p className="text-xs">已选择：{selected.quote.slice(0,100)}</p>
+          <p className="text-xs leading-5 text-[#817668]">
+            网络异常时请勿修改这条待发送内容；直接重试会使用原发送编号。
+            如果必须退出页面，请先在下方手动加密备份。
+          </p>
           <label className="block text-xs">
             笔记
             <textarea className="mt-1 min-h-20 w-full rounded-lg border border-[#cfc4b3] bg-white p-2 text-sm"
