@@ -306,8 +306,15 @@ export function V2InkOverlay({
   }
 
   async function save() {
-    if (mode === "read" || busy || !activeAnchor ||
+    if (!enabled || mode === "read" || busy || !activeAnchor ||
         !isValidInkShape({ kind: mode, points: draft })) return;
+    const container=containerRef.current;
+    const root=textRootRef.current;
+    if(!container || !root ||
+       !textBounds(container,root,activeAnchor,true)){
+      setNotice("文字换行已改变或绘图目标不存在：无法保存此图形。请恢复单行布局后再试。");
+      return;
+    }
     setBusy(true);
     const { error } = await client.from("reading_ink_v2").insert({
       room_id: roomId,chunk_index: chunkIndex,author_id: userId,
@@ -405,7 +412,7 @@ export function V2InkOverlay({
               </label>
               <button className="rounded-lg border px-2.5 py-1.5 text-xs"
                 type="button"
-                disabled={busy || !isValidInkShape({kind:mode,points:draft})}
+                disabled={busy || !draftBounds || !isValidInkShape({kind:mode,points:draft})}
                 onClick={() => { void save(); }}>保存笔迹</button>
               <button className="rounded-lg border px-2.5 py-1.5 text-xs"
                 type="button" disabled={busy || draft.length === 0}
