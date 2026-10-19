@@ -93,7 +93,8 @@ test("bound per target, reject corrupted rows and preserve intact records",async
   ));
   await assert.rejects(addAtomicPending(store,scope,draft(11),password),/容量/);
   assert.equal((await listAtomicPending(store,scope)).length,10);
-  const first=store.rows.values().next().value;
+  const first=[...store.rows.values()].find(row=>row.operation===uuid(1));
+  assert.ok(first);
   first.envelope="{";
   await assert.rejects(recoverAtomicPending(store,scope,uuid(1),password),/损坏/);
   assert.equal(await recoverAtomicPending(store,scope,uuid(2),password),draft(2));
