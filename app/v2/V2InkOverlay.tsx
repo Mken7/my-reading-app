@@ -2,13 +2,17 @@
 
 import {
   useCallback, useEffect, useRef, useState,
-  type PointerEvent, type ReactNode,
+  type PointerEvent, type ReactNode, type RefObject,
 } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   addInkPoint, inkArrowHead, isValidInkShape, normalizedInkPoint,
   type InkKind, type InkPoint, type InkShape,
 } from "@/lib/v2/ink";
+import {
+  locateTextOffset, paddedTextRect, validTextAnchor,
+  type PlainRect, type TextAnchor,
+} from "@/lib/v2/textAnchor";
 
 type Props = {
   client: SupabaseClient;
@@ -17,9 +21,17 @@ type Props = {
   userId: string;
   enabled: boolean;
   children: ReactNode;
+  selectedText: TextAnchor | null;
+  textRootRef: RefObject<HTMLDivElement | null>;
 };
 
-type RawInk = InkShape & { created_at: string };
+type RawInk = InkShape & {
+  created_at: string;
+  anchor_start: number | null;
+  anchor_end: number | null;
+};
+
+type PositionedInk = { shape: RawInk; bounds: PlainRect };
 
 const toolNames: { kind: InkKind; label: string }[] = [
   { kind: "ellipse", label: "画圈" },
@@ -30,15 +42,61 @@ const toolNames: { kind: InkKind; label: string }[] = [
 function validInkRow(raw: unknown): raw is RawInk {
   if (!raw || typeof raw !== "object") return false;
   const row = raw as Record<string, unknown>;
+  const start = row.anchor_start;
+  const end = row.anchor_end;
   return typeof row.id === "string" &&
     typeof row.author_id === "string" &&
     typeof row.created_at === "string" &&
     (row.visibility === "private" || row.visibility === "shared") &&
+    ((start === null && end === null) ||
+      (typeof start === "number" && typeof end === "number" &&
+        validTextAnchor({ start, end }, 3000))) &&
     Array.isArray(row.points) &&
     isValidInkShape({
       kind: row.kind as InkKind,
       points: row.points as InkPoint[],
     });
+}
+
+/**
+ * Recover a real DOM Range from Unicode codepoints, even when React splits the
+ * immutable text into multiple highlighted spans and includes emoji.
+ */
+function textBounds(
+  container: HTMLElement,
+  textRoot: HTMLElement,
+  anchor: TextAnchor | null,
+): PlainRect | null {
+  const rootRect = textRoot.getBoundingClientRect();
+  const parentRect = container.getBoundingClientRect();
+  if (!anchor) {
+    return {
+      left: rootRect.left - parentRect.left,
+      top: rootRect.top - parentRect.top,
+      width: rootRect.width,
+      height: rootRect.height,
+    };
+  }
+
+  const walker = document.createTreeWalker(textRoot, NodeFilter.SHOW_TEXT);
+  const nodes: Text[] = [];
+  let node: Node | null = walker.nextNode();
+  while (node) {
+    if (node.nodeType === Node.TEXT_NODE) nodes.push(node as Text);
+    node = walker.nextNode();
+  }
+  const segments = nodes.map((text) => text.data);
+  const total = segments.reduce((sum, item) => sum + Array.from(item).length, 0);
+  if (!validTextAnchor(anchor, total)) return null;
+  const first = locateTextOffset(segments, anchor.start);
+  const last = locateTextOffset(segments, anchor.end);
+  if (!first || !last) return null;
+
+  const range = document.createRange();
+  range.setStart(nodes[first.segmentIndex], first.utf16Offset);
+  range.setEnd(nodes[last.segmentIndex], last.utf16Offset);
+  const rect = range.getBoundingClientRect();
+  return paddedTextRect(rect, parentRect);
 }
 
 function InkPath({ shape, color, opacity = 0.85 }: {
@@ -49,46 +107,57 @@ function InkPath({ shape, color, opacity = 0.85 }: {
   if (!isValidInkShape(shape)) return null;
   const first = shape.points[0];
   const last = shape.points.at(-1) ?? first;
+  const line = {
+    stroke: color,
+    strokeWidth: 2.5,
+    vectorEffect: "non-scaling-stroke" as const,
+  };
   if (shape.kind === "ellipse") {
     return <ellipse cx={(first.x + last.x) / 2}
       cy={(first.y + last.y) / 2}
       rx={Math.abs(last.x - first.x) / 2}
       ry={Math.abs(last.y - first.y) / 2}
-      stroke={color} strokeWidth={4} fill="none" opacity={opacity}/>;
+      {...line} fill="none" opacity={opacity}/>;
   }
   if (shape.kind === "arrow") {
-    return <g stroke={color} strokeWidth={4} strokeLinecap="round"
-      strokeLinejoin="round" fill="none" opacity={opacity}>
-      <line x1={first.x} y1={first.y} x2={last.x} y2={last.y}/>
-      <polyline points={inkArrowHead(first,last)}/>
+    return <g fill="none" strokeLinecap="round"
+      strokeLinejoin="round" opacity={opacity}>
+      <line x1={first.x} y1={first.y} x2={last.x} y2={last.y}
+        {...line}/>
+      <polyline points={inkArrowHead(first,last)} {...line}/>
     </g>;
   }
   return <polyline
-    points={shape.points.map((p) => p.x + "," + p.y).join(" ")}
-    fill="none" stroke={color} strokeWidth={4}
-    strokeLinecap="round" strokeLinejoin="round"
-    opacity={opacity}/>;
+    points={shape.points.map((point) => point.x + "," + point.y).join(" ")}
+    fill="none" strokeLinecap="round" strokeLinejoin="round"
+    {...line} opacity={opacity}/>;
 }
 
 /**
- * Drawing happens only in an explicit pen tool. In reading mode the SVG layer
- * ignores pointers so normal text selection and scrolling keep working.
+ * Anchored ink is painted relative to the selected text bounding box, which
+ * is recalculated on reflow. Existing old rows with NULL anchors remain
+ * paragraph-relative; nothing is deleted or rewritten during migration.
  */
 export function V2InkOverlay({
   client, roomId, chunkIndex, userId, enabled, children,
+  selectedText, textRootRef,
 }: Props) {
   const [mode, setMode] = useState<InkKind | "read">("read");
   const [visibility, setVisibility] = useState<"private" | "shared">("private");
   const [saved, setSaved] = useState<RawInk[]>([]);
+  const [positioned, setPositioned] = useState<PositionedInk[]>([]);
+  const [activeAnchor, setActiveAnchor] = useState<TextAnchor | null>(null);
+  const [draftBounds, setDraftBounds] = useState<PlainRect | null>(null);
   const [draft, setDraft] = useState<InkPoint[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<SVGSVGElement>(null);
   const activePointer = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     const { data, error } = await client.from("reading_ink_v2")
-      .select("id,author_id,kind,points,visibility,created_at")
+      .select("id,author_id,kind,points,visibility,created_at,anchor_start,anchor_end")
       .eq("room_id",roomId).eq("chunk_index",chunkIndex)
       .order("created_at",{ascending:true}).limit(150);
     if (error) {
@@ -99,14 +168,45 @@ export function V2InkOverlay({
   }, [client,roomId,chunkIndex]);
 
   useEffect(() => {
-    const timeout = window.setTimeout(() => { void load(); },0);
+    const timeout = window.setTimeout(() => { void load(); }, 0);
     return () => window.clearTimeout(timeout);
-  },[load]);
+  }, [load]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const root = textRootRef.current;
+    if (!container || !root) return;
+    let animation = 0;
+    const measure = () => {
+      const next = saved.flatMap((shape) => {
+        const anchor = shape.anchor_start === null || shape.anchor_end === null
+          ? null
+          : { start: shape.anchor_start, end: shape.anchor_end };
+        const bounds = textBounds(container, root, anchor);
+        return bounds ? [{ shape, bounds }] : [];
+      });
+      setPositioned(next);
+      setDraftBounds(activeAnchor ? textBounds(container,root,activeAnchor) : null);
+    };
+    const schedule = () => {
+      window.cancelAnimationFrame(animation);
+      animation = window.requestAnimationFrame(measure);
+    };
+    schedule();
+    const observer = new ResizeObserver(schedule);
+    observer.observe(root);
+    window.addEventListener("resize",schedule);
+    return () => {
+      window.cancelAnimationFrame(animation);
+      observer.disconnect();
+      window.removeEventListener("resize",schedule);
+    };
+  }, [saved, activeAnchor, textRootRef]);
 
   function pointerPoint(event: PointerEvent<SVGSVGElement>): InkPoint | null {
-    const svg = surfaceRef.current;
-    if (!svg) return null;
-    const rect = svg.getBoundingClientRect();
+    const surface = surfaceRef.current;
+    if (!surface) return null;
+    const rect = surface.getBoundingClientRect();
     try {
       return normalizedInkPoint(
         event.clientX,event.clientY,rect.left,rect.top,rect.width,rect.height,
@@ -154,27 +254,46 @@ export function V2InkOverlay({
     setNotice("已取消本次绘图，服务器没有保存。");
   }
 
-  async function save() {
-    if (mode === "read" || busy || !isValidInkShape({ kind: mode, points: draft })) {
+  function chooseTool(kind: InkKind) {
+    if (!selectedText || !draftBounds && !textRootRef.current) {
+      setNotice("请先在正文选中要圈注的文字，再选择绘图工具。");
       return;
     }
+    setActiveAnchor({ ...selectedText });
+    setMode(kind);
+    setDraft([]);
+    setNotice("");
+  }
+
+  async function save() {
+    if (mode === "read" || busy || !activeAnchor ||
+        !isValidInkShape({ kind: mode, points: draft })) return;
     setBusy(true);
     const { error } = await client.from("reading_ink_v2").insert({
       room_id: roomId,chunk_index: chunkIndex,author_id: userId,
       kind: mode,points: draft,visibility,
+      anchor_start: activeAnchor.start,anchor_end: activeAnchor.end,
     });
     if (error) {
-      setNotice("保存失败：可能是权限不足、书房已关闭或已达到每人每段 60 条笔迹上限。");
+      setNotice("保存失败：可能是权限不足、文字选区失效或已达到笔迹上限。");
     } else {
       setDraft([]);
       setMode("read");
-      setNotice("笔迹已保存。私人笔迹仅自己可见；共享笔迹双方可见。");
+      setActiveAnchor(null);
+      setNotice("笔迹已绑定选中文字；调整字号时将重新定位。");
       await load();
     }
     setBusy(false);
   }
 
-  const drawing = enabled && mode !== "read" && !busy;
+  const drawing = enabled && mode !== "read" && !busy && draftBounds !== null;
+  const svgStyle = (bounds: PlainRect) => ({
+    position: "absolute" as const,
+    left: bounds.left, top: bounds.top,
+    width: bounds.width, height: bounds.height,
+    overflow: "visible" as const,
+    pointerEvents: "none" as const,
+  });
 
   return (
     <div>
@@ -184,15 +303,15 @@ export function V2InkOverlay({
           <button className="rounded-lg border px-2.5 py-1.5 text-xs"
             type="button" aria-pressed={mode === "read"}
             disabled={busy}
-            onClick={() => { setMode("read"); setDraft([]); }}>
+            onClick={() => { setMode("read"); setActiveAnchor(null); setDraft([]); }}>
             阅读/选字
           </button>
           {toolNames.map((tool) => (
-            <button key={tool.kind} type="button" disabled={busy}
+            <button key={tool.kind} type="button" disabled={busy || !selectedText}
               className="rounded-lg border px-2.5 py-1.5 text-xs"
               aria-pressed={mode === tool.kind}
               style={{background: mode === tool.kind ? "#dce8f8" : "transparent"}}
-              onClick={() => { setMode(tool.kind);setDraft([]);setNotice(""); }}>
+              onClick={() => chooseTool(tool.kind)}>
               {tool.label}
             </button>
           ))}
@@ -200,12 +319,16 @@ export function V2InkOverlay({
             type="button" disabled={busy} onClick={() => { void load(); }}>
             刷新笔迹
           </button>
+          <span className="w-full text-xs text-[#817668]">
+            {selectedText
+              ? "已选中文字，可以画圈、画箭头或自由画（跨行可能出现形状变化）。"
+              : "先选中一处文字，再选择手绘工具。旧笔迹仍可显示。"}
+          </span>
           {mode !== "read" && (
             <div className="flex w-full flex-wrap items-center gap-2">
               <label className="text-xs">可见范围
                 <select className="ml-2 rounded-lg border bg-white px-2 py-1"
-                  value={visibility}
-                  disabled={busy}
+                  value={visibility} disabled={busy}
                   onChange={(event) =>
                     setVisibility(event.target.value as "private" | "shared")}>
                   <option value="private">仅自己</option>
@@ -213,42 +336,54 @@ export function V2InkOverlay({
                 </select>
               </label>
               <button className="rounded-lg border px-2.5 py-1.5 text-xs"
-                type="button" disabled={busy || !isValidInkShape({kind:mode,points:draft})}
+                type="button"
+                disabled={busy || !isValidInkShape({kind:mode,points:draft})}
                 onClick={() => { void save(); }}>保存笔迹</button>
               <button className="rounded-lg border px-2.5 py-1.5 text-xs"
                 type="button" disabled={busy || draft.length === 0}
                 onClick={() => setDraft([])}>清除未保存</button>
               <span className="text-xs text-[#817668]">
-                绘图时暂时关闭文本选中，保存后恢复。
+                手绘位置以选中的文字为基准重新布局。
               </span>
             </div>
           )}
         </div>
       )}
-      <div className="relative">
+      <div ref={containerRef} className="relative">
         {children}
-        {enabled && <svg ref={surfaceRef}
-          className="absolute inset-0 h-full w-full"
-          viewBox="0 0 1000 1000" preserveAspectRatio="none"
-          aria-label={drawing ? "手绘画布，请用鼠标或手指描绘" : "已保存的手绘批注"}
-          style={{
-            touchAction: drawing ? "none" : "auto",
-            pointerEvents: drawing ? "auto" : "none",
-            cursor: drawing ? "crosshair" : "default",
-          }}
-          onPointerDown={start} onPointerMove={move}
-          onPointerUp={finish} onPointerCancel={cancel}>
-          {saved.map((shape) => <InkPath key={shape.id} shape={shape}
-            color={shape.author_id === userId ? "#2563eb" : "#be456b"}/>)}
-          {mode !== "read" && draft.length > 1 && (
-            <InkPath shape={{kind:mode,points:draft}} color="#2563eb" opacity={0.65}/>
-          )}
-        </svg>}
+        {enabled && positioned.map(({shape,bounds}) => (
+          <svg key={shape.id} viewBox="0 0 1000 1000"
+            preserveAspectRatio="none" aria-hidden="true"
+            style={svgStyle(bounds)}>
+            <InkPath shape={shape}
+              color={shape.author_id === userId ? "#2563eb" : "#be456b"}/>
+          </svg>
+        ))}
+        {drawing && draftBounds && (
+          <svg ref={surfaceRef}
+            className="absolute"
+            viewBox="0 0 1000 1000" preserveAspectRatio="none"
+            role="img" aria-label="选中文字上的手绘画布"
+            style={{
+              ...svgStyle(draftBounds),
+              touchAction: "none",
+              pointerEvents: "auto",
+              cursor: "crosshair",
+            }}
+            onPointerDown={start} onPointerMove={move}
+            onPointerUp={finish} onPointerCancel={cancel}>
+            {draft.length > 1 && (
+              <InkPath shape={{kind:mode,points:draft}}
+                color="#2563eb" opacity={0.65}/>
+            )}
+          </svg>
+        )}
       </div>
       {notice && enabled && <p role="status" className="mt-2 text-xs text-[#76563a]">{notice}</p>}
       {enabled && saved.length > 0 && (
         <p className="mt-1 text-xs text-[#817668]">
-          当前可见 {saved.length} 条笔迹。蓝色是自己的，玫红色是共读伙伴的。
+          可见 {saved.length} 条笔迹。蓝色是自己的，玫红色是伙伴的；
+          旧版无文字锚点的笔迹仍按整段比例显示。
         </p>
       )}
     </div>
