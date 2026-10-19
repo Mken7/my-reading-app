@@ -5,6 +5,10 @@ import {
   hasEncryptedDraft, recoverEncryptedDraft, removeEncryptedDraft,
   saveEncryptedDraft, type DraftScope,
 } from "@/lib/v2/encryptedDraft";
+import {
+  addEncryptedPending,listEncryptedPending,recoverEncryptedPending,
+  removeEncryptedPending,
+} from "@/lib/v2/draftQueue";
 
 type Props = {
   scope: DraftScope;
@@ -26,13 +30,19 @@ export function V2EncryptedDraft({
   const [hasBackup,setHasBackup] = useState(false);
   const [busy,setBusy] = useState(false);
   const [message,setMessage] = useState("");
+  const [pendingIds,setPendingIds] = useState<string[]>([]);
+  const [confirmRemove,setConfirmRemove] = useState<string | null>(null);
 
   const { userId, roomId, kind, targetId } = scope;
   const check = useCallback(async () => {
     try {
-      setHasBackup(await hasEncryptedDraft(window.localStorage,{
-        userId,roomId,kind,targetId,
-      }));
+      const currentScope={userId,roomId,kind,targetId};
+      const [legacy,queued]=await Promise.all([
+        hasEncryptedDraft(window.localStorage,currentScope),
+        listEncryptedPending(window.localStorage,currentScope),
+      ]);
+      setHasBackup(legacy);
+      setPendingIds(queued);
     } catch {
       setMessage("浏览器本地存储不可用，请勿依赖离线备份。");
     }
@@ -42,6 +52,52 @@ export function V2EncryptedDraft({
     const id=window.setTimeout(()=>{ void check(); },0);
     return ()=>window.clearTimeout(id);
   },[check,refreshToken]);
+
+  async function enqueue() {
+    if (busy || disabled || !draftValue || password.length < 12) return;
+    setBusy(true);
+    try {
+      await addEncryptedPending(window.localStorage,scope,draftValue,password);
+      setPendingIds(await listEncryptedPending(window.localStorage,scope));
+      setMessage("此条待发送内容已加密加入本机队列。恢复后必须手动确认发送。");
+    } catch(error) {
+      setMessage(error instanceof Error ? error.message : "加入本机队列失败");
+    } finally {
+      setPassword("");
+      setBusy(false);
+    }
+  }
+
+  async function restorePending(id: string) {
+    if (busy || disabled || password.length < 12) return;
+    setBusy(true);
+    try {
+      const text=await recoverEncryptedPending(window.localStorage,scope,id,password);
+      if (text===null) setMessage("这条本机待发送记录已不存在。");
+      else if (onRestore(text)) setMessage("已将此条记录恢复到编辑框。请确认正文和可见性，再手动发送。");
+      else setMessage("当前编辑框有其他内容或记录不匹配，未覆盖现有编辑。");
+    } catch(error) {
+      setMessage(error instanceof Error ? error.message : "无法解锁此条待发送记录");
+    } finally {
+      setPassword("");
+      setBusy(false);
+    }
+  }
+
+  async function discardPending(id: string) {
+    if (busy || disabled || confirmRemove!==id) return;
+    setBusy(true);
+    try {
+      await removeEncryptedPending(window.localStorage,scope,id);
+      setPendingIds(await listEncryptedPending(window.localStorage,scope));
+      setMessage("该条本机密文已清除，不影响服务器上已经发送的笔记。");
+    } catch(error) {
+      setMessage(error instanceof Error ? error.message : "清理该条待发送记录失败");
+    } finally {
+      setConfirmRemove(null);
+      setBusy(false);
+    }
+  }
 
   async function backup() {
     if (busy || disabled || !draftValue || password.length < 12) return;
@@ -101,7 +157,8 @@ export function V2EncryptedDraft({
         <p className="text-xs leading-5 text-[#746b60]">
           只有点击“加密保存”才会写入本机。请设置独立于登录密码的口令
           （至少 12 字符）；不上传口令，忘记后无法恢复。
-          本功能不支持跨设备同步，也不能抵御恶意浏览器扩展。
+          队列中的每条密文仅可在本设备恢复，不能跨设备同步；
+          也不能抵御恶意浏览器扩展。
         </p>
         <label className="block text-xs">
           加密口令
@@ -115,13 +172,49 @@ export function V2EncryptedDraft({
         <div className="flex flex-wrap gap-2">
           <button className="rounded-lg border px-2.5 py-1.5 text-xs disabled:opacity-50"
             type="button" disabled={busy || disabled || password.length < 12 || !draftValue}
-            onClick={()=>{void backup();}}>加密保存当前草稿</button>
+            onClick={()=>{void enqueue();}}>加入加密待发送队列</button>
+          <button className="rounded-lg border px-2.5 py-1.5 text-xs disabled:opacity-50"
+            type="button" disabled={busy || disabled || password.length < 12 || !draftValue}
+            onClick={()=>{void backup();}}>覆盖旧版单份备份</button>
           <button className="rounded-lg border px-2.5 py-1.5 text-xs disabled:opacity-50"
             type="button" disabled={busy || disabled || password.length < 12 || !hasBackup}
             onClick={()=>{void restore();}}>输入口令并恢复</button>
           <button className="rounded-lg border px-2.5 py-1.5 text-xs disabled:opacity-50"
             type="button" disabled={busy || disabled || !hasBackup}
             onClick={()=>{void discard();}}>清除本机备份</button>
+        </div>
+        <div className="mt-3 rounded-lg border border-[#ded5ca] bg-[#faf8f3] p-2">
+          <p className="text-xs font-medium">本机待发送：{pendingIds.length} / 10</p>
+          <p className="mt-1 text-xs text-[#817668]">
+            只展示序号，不预览未解密的私人内容。恢复后请检查隐私范围并自行发送。
+          </p>
+          {pendingIds.length===0 && <p className="mt-2 text-xs">暂无待发送记录。</p>}
+          <div className="mt-2 space-y-2">
+            {pendingIds.map((id,index)=>(
+              <div key={id} className="flex flex-wrap items-center gap-2 rounded-lg border border-[#ddd6cd] p-2">
+                <span className="mr-auto text-xs">待发送项 {index+1}</span>
+                <button type="button" disabled={busy || disabled || password.length<12}
+                  className="rounded-lg border px-2 py-1 text-xs disabled:opacity-50"
+                  onClick={()=>{void restorePending(id);}}>
+                  解密恢复
+                </button>
+                {confirmRemove===id ? (
+                  <>
+                    <button type="button" disabled={busy || disabled}
+                      className="rounded-lg border px-2 py-1 text-xs"
+                      onClick={()=>{void discardPending(id);}}>确认清除</button>
+                    <button type="button" disabled={busy || disabled}
+                      className="rounded-lg border px-2 py-1 text-xs"
+                      onClick={()=>setConfirmRemove(null)}>取消</button>
+                  </>
+                ) : (
+                  <button type="button" disabled={busy || disabled}
+                    className="rounded-lg border px-2 py-1 text-xs"
+                    onClick={()=>setConfirmRemove(id)}>清除本机项</button>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
         {message && <p role="status" className="text-xs text-[#76563a]">{message}</p>}
       </div>
