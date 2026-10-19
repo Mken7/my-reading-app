@@ -11,6 +11,7 @@ import { addAtomicPending, listAtomicPending, recoverAtomicPending, removeAtomic
 import { browserAtomicPendingStore, probeBrowserDraftDatabase } from "./compiled/browserAtomicPending.js";
 import { exportEncryptedPendingBundle, importEncryptedPendingBundle } from "./compiled/portablePending.js";
 import { reconcileCursor, validReadingCursor } from "./compiled/readingProgressSync.js";
+import { groupedVisualLines, singleLineInkBounds } from "./compiled/inkReflow.js";
 
 const status=document.getElementById("browser-result");
 function assert(value,message) {
@@ -93,6 +94,39 @@ try {
   assert(await received==="cursor-updated","browser tabs did not receive cursor change");
   sender.close();
   receiver.close();
+  // Use actual DOM layout/Range data, not mocked rectangles: highlighted
+  // inline spans can share a line or reflow onto multiple lines.
+  const outer=document.createElement("div");
+  outer.style.cssText="width:420px; font:18px/1.6 sans-serif; white-space:normal;";
+  const marked=document.createElement("span");
+  marked.textContent="中文文字甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳";
+  outer.append(marked);
+  document.body.append(outer);
+  const range=document.createRange();
+  range.selectNodeContents(marked);
+  function rects() {
+    return [...range.getClientRects()].map(r=>({
+      left:r.left,top:r.top,width:r.width,height:r.height,
+    }));
+  }
+  function parentRect() {
+    const r=outer.getBoundingClientRect();
+    return {left:r.left,top:r.top,width:r.width,height:r.height};
+  }
+  assert(groupedVisualLines(rects()).length===1,
+    "full width CJK selection should occupy one visual line");
+  assert(singleLineInkBounds(rects(),parentRect())!==null,
+    "single-line drawing anchor could not render");
+  outer.style.width="80px";
+  assert(groupedVisualLines(rects()).length>1,
+    "browser fixture failed to wrap the selected text");
+  assert(singleLineInkBounds(rects(),parentRect())===null,
+    "reflow erroneously stretches drawing across wrapped lines");
+  outer.style.width="420px";
+  assert(singleLineInkBounds(rects(),parentRect())!==null,
+    "drawing did not return to its original text anchor after reflow");
+  outer.remove();
+
   status.textContent="BROWSER_TEST_PASS";
 } catch(error) {
   status.textContent="BROWSER_TEST_FAIL: "+String(error && error.message || error);
