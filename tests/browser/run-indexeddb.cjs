@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- Node CommonJS browser test launcher. */
 /* Run actual IndexedDB/API integration in a real headless Chromium browser.
  * No real accounts, secrets, or Supabase connections are used. */
 const http=require("node:http");
