@@ -47,13 +47,15 @@ jobs:
           --rootDir lib/v2 --outDir tests/browser/compiled
           lib/v2/browserAtomicPending.ts lib/v2/portablePending.ts
           lib/v2/readingProgressSync.ts lib/v2/inkReflow.ts
-          lib/v2/readerLayout.ts lib/v2/pdf.ts
+          lib/v2/readerLayout.ts lib/v2/pdf.ts lib/v2/epub.ts
       - name: Exercise IndexedDB in a real headless browser
         run: node tests/browser/run-indexeddb.cjs
       - name: Verify single/mobile and two-page/desktop responsive reading layout
         run: node tests/browser/run-reader.cjs
       - name: Decode searchable PDF and reject empty scans in real Chromium
         run: node tests/browser/run-pdf.cjs
+      - name: Extract EPUB XHTML and reject external script content in real Chromium
+        run: node tests/browser/run-epub.cjs
 
   database-security:
     runs-on: ubuntu-latest
