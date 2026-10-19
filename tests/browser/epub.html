@@ -22,20 +22,28 @@ function zip(files){
   const chunks=[],headers=[];
   for(const [filename,bodyText] of files){
     const name=enc.encode(filename),body=enc.encode(bodyText);
+    // This is a real raw-DEFLATE payload of the first XHTML chapter, produced
+    // with Node zlib.deflateRawSync. Chrome must decompress and CRC-check it.
+    const compressed=filename==="OPS/Text/a.xhtml"
+      ? Uint8Array.from(atob(
+        "s8koyc1RqMjNySu2VcooKSmw0tcvLy/XKzfWyy9K1ze0tLTUrwCpUbKzScpPqbSzyTC0e75mzZMdDc9XL7DRB/JsCqACz9ZtfbJj7bNp7R/mT+iw0S+wsylOLsosKLErz8xLyS/XSy0oTXKtSE0uLUlNsS0pKk21ttGHqrDRhxiuD7LKDgA="
+      ),char=>char.charCodeAt(0)) : body;
+    const method=filename==="OPS/Text/a.xhtml"?8:0;
     const crc=crc32(body);
     const local=new Uint8Array(30);
     le32(local,0,0x04034b50);le16(local,4,20);
-    le32(local,14,crc);le32(local,18,body.length);
+    le16(local,8,method);
+    le32(local,14,crc);le32(local,18,compressed.length);
     le32(local,22,body.length);le16(local,26,name.length);
-    chunks.push(local,name,body);
+    chunks.push(local,name,compressed);
 
     const central=new Uint8Array(46);
     le32(central,0,0x02014b50);le16(central,4,20);
-    le16(central,6,20);le32(central,16,crc);
-    le32(central,20,body.length);le32(central,24,body.length);
+    le16(central,6,20);le16(central,10,method);le32(central,16,crc);
+    le32(central,20,compressed.length);le32(central,24,body.length);
     le16(central,28,name.length);le32(central,42,offset);
     headers.push(central,name);
-    offset+=local.length+name.length+body.length;
+    offset+=local.length+name.length+compressed.length;
   }
   const size=headers.reduce((sum,chunk)=>sum+chunk.length,0);
   const tail=new Uint8Array(22);
