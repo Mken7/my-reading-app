@@ -151,6 +151,7 @@ export function V2InkOverlay({
   const [draft, setDraft] = useState<InkPoint[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [pendingHide, setPendingHide] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<SVGSVGElement>(null);
   const activePointer = useRef<number | null>(null);
@@ -286,6 +287,23 @@ export function V2InkOverlay({
     setBusy(false);
   }
 
+  async function hideMyInk(id: string) {
+    if (busy || pendingHide !== id ||
+        !saved.some((item) => item.id === id && item.author_id === userId)) return;
+    setBusy(true);
+    const { data, error } = await client.rpc("v2_hide_ink", {
+      target_room: roomId, target_ink: id,
+    });
+    setPendingHide(null);
+    if (error || data !== true) {
+      setNotice("撤销失败：请确认自己是笔迹作者，且书房仍可编辑。");
+    } else {
+      setNotice("这条笔迹已从双方阅读界面隐藏，并留下撤销审计记录。");
+      await load();
+    }
+    setBusy(false);
+  }
+
   const drawing = enabled && mode !== "read" && !busy && draftBounds !== null;
   const svgStyle = (bounds: PlainRect) => ({
     position: "absolute" as const,
@@ -381,10 +399,52 @@ export function V2InkOverlay({
       </div>
       {notice && enabled && <p role="status" className="mt-2 text-xs text-[#76563a]">{notice}</p>}
       {enabled && saved.length > 0 && (
-        <p className="mt-1 text-xs text-[#817668]">
-          可见 {saved.length} 条笔迹。蓝色是自己的，玫红色是伙伴的；
-          旧版无文字锚点的笔迹仍按整段比例显示。
-        </p>
+        <div className="mt-2 space-y-2">
+          <p className="text-xs text-[#817668]">
+            当前可见 {saved.length} 条笔迹。蓝色是自己的，玫红色是伙伴的。
+            旧版笔迹仍按整段比例显示。
+          </p>
+          {saved.some((item) => item.author_id === userId) && (
+            <details>
+              <summary className="cursor-pointer text-xs">
+                管理我保存的笔迹
+              </summary>
+              <div className="mt-2 space-y-2">
+                {saved.filter((item) => item.author_id === userId)
+                  .map((item, index) => (
+                    <div key={item.id}
+                      className="flex flex-wrap items-center gap-2 rounded-lg border border-[#e4dbce] p-2">
+                      <span className="mr-auto text-xs">
+                        笔迹 {index + 1} · {item.kind === "ellipse" ? "圆圈" :
+                          item.kind === "arrow" ? "箭头" : "曲线"} ·
+                        {item.visibility === "private" ? "私人" : "双方共享"}
+                      </span>
+                      {pendingHide === item.id ? (
+                        <>
+                          <button className="rounded-lg border px-2 py-1 text-xs"
+                            type="button" disabled={busy}
+                            onClick={() => { void hideMyInk(item.id); }}>
+                            确认撤销
+                          </button>
+                          <button className="rounded-lg border px-2 py-1 text-xs"
+                            type="button" disabled={busy}
+                            onClick={() => setPendingHide(null)}>
+                            取消
+                          </button>
+                        </>
+                      ) : (
+                        <button className="rounded-lg border px-2 py-1 text-xs"
+                          type="button" disabled={busy}
+                          onClick={() => setPendingHide(item.id)}>
+                          撤销我的笔迹
+                        </button>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            </details>
+          )}
+        </div>
       )}
     </div>
   );
