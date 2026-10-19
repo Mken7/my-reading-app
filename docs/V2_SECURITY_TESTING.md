@@ -66,7 +66,8 @@ CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_retry_v2_smo
 - [x] Add owner-only soft hide of saved ink/replies, enforced by RLS and trusted RPCs with hash-chain events and multi-user regression checks.
 - [ ] Implement actual legal erasure/retention/export workflows; soft hiding leaves the original payload in the server database.
 - [x] Add encrypted per-target pending drafts with retained client operation IDs and server-checked idempotent manual retries (not an automatic offline queue).
-- [ ] Add automatic offline queues, multiple pending items per location, accessibility alternatives and device/browser integration tests.
+- [x] Add bounded multi-item (10 per target) encrypted pending list with explicit per-item recovery and clearing; never auto-send private text.
+- [ ] Add transactional multi-tab coordination, automatic offline queue policy, accessibility alternatives and device/browser integration tests.
 - [ ] Add IP/network-aware gateway limits, anomalous-use detection and accessible challenges; preserve legitimate reading and data exports.
 - [ ] Add signed/audited off-database chain-head snapshots and explicit data-retention process.
 - [ ] Add monitoring and rollback plans and rehearse restore on synthetic data.
