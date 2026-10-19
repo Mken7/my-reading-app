@@ -64,6 +64,29 @@ function transact<T>(
 }
 
 /**
+ * On-demand storage check: write then remove an opaque probe in ONE IndexedDB
+ * transaction. The probe never contains user data and cannot be left behind
+ * after a committed transaction or interrupted upgrade.
+ */
+export async function probeBrowserDraftDatabase(): Promise<void> {
+  const db=await openDatabase();
+  try {
+    await transact<void>(db,"readwrite",(store,set,abort)=>{
+      const id="draft-probe:"+crypto.randomUUID();
+      const create=store.add({
+        id,scope:id,operation:id,envelope:"probe-no-user-content",
+      } satisfies EncryptedPendingRow);
+      create.onerror=()=>abort("本机数据库不允许临时写入");
+      create.onsuccess=()=>{
+        const clean=store.delete(id);
+        clean.onerror=()=>abort("无法清理本机临时诊断记录");
+        clean.onsuccess=()=>set(undefined);
+      };
+    });
+  } finally {db.close();}
+}
+
+/**
  * IndexedDB readwrite transactions serialize overlapping writes, including
  * independent tabs of the same origin. One row per draft means no second
  * plaintext or non-atomic index has to be updated after a successful write.
