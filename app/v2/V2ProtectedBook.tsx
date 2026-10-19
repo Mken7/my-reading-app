@@ -571,38 +571,76 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
           )}
         </div>
       )}
-      <div className="mt-4 flex flex-wrap items-center gap-2">
+      <nav aria-label="阅读翻页和段落导航" className="mt-4 flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-2 text-xs">
-          要阅读的段落
+          跳转到段落
           <input type="number" min={0} max={1999} value={readIndex}
-            onChange={(e) => setReadIndex(Number(e.target.value))}
-            className="w-24 rounded-lg border border-[#cfc4b3] bg-white px-2 py-1.5" />
+            onChange={(e)=>setReadIndex(Number(e.target.value))}
+            className="w-24 rounded-lg border border-[#cfc4b3] bg-white px-2 py-1.5"/>
         </label>
-        <button type="button" className={buttonClass} disabled={working}
-          onClick={() => { void read(readIndex); }}>
-          读取此段
+        <button type="button" className={buttonClass}
+          disabled={working || !Number.isInteger(readIndex) || readIndex<0 || readIndex>1999}
+          onClick={()=>{void read(readIndex);}}>跳转</button>
+        <button type="button" className={buttonClass}
+          disabled={working || !chunks.length || pageStart===0}
+          onClick={()=>{void read(readingPageIndex(pageStart,-1,wideSpread));}}>
+          上一{wideSpread?"组":"页"}
         </button>
         <button type="button" className={buttonClass}
-          disabled={working || readIndex >= 1999}
-          onClick={() => { void read(readIndex + 1); }}>
-          下一段
+          disabled={working || !chunks.length || pageStart>=1999}
+          onClick={()=>{void read(readingPageIndex(pageStart,1,wideSpread));}}>
+          下一{wideSpread?"组":"页"}
         </button>
-      </div>
+        <p className="text-xs text-[#776b5e]" role="status">
+          {wideSpread?"电脑双页":"手机单页"} ·
+          {chunks.length ? " 当前第 "+(pageStart+1)+" 段起" : " 尚未打开正文"}
+        </p>
+      </nav>
       {message && <p role="status" className="mt-3 text-xs text-[#76563a]">{message}</p>}
-      {chunks.map((chunk) => (
-        <article key={chunk.chunk_index}
-          className="mt-3 rounded-lg border border-[#e7dfd3] px-4 py-5"
-          style={{ backgroundColor: textBackground }}>
-          <p className="mb-2 text-xs text-[#817668]">段落 {chunk.chunk_index + 1}</p>
-          <V2Annotations key={roomId + ":" + userId + ":" + chunk.chunk_index}
-            client={client} roomId={roomId} userId={userId}
-            chunkIndex={chunk.chunk_index} body={chunk.body}
-            fontSize={fontSize} lineHeight={lineHeight}
-            showAnnotations={annotationsShown}
-            readingAnchor={readingAnchor}
-            onSetReadingPosition={(offset)=>{void saveExactPosition(offset);}} />
-        </article>
-      ))}
+      {chunks.length>0 && (
+        <div ref={pagesRef} className="v2-reader-pages" aria-label="正文阅读区域">
+          {chunks.slice(0,spreadSize(wideSpread)).map((chunk,pageNumber)=>(
+            <article key={roomId+":"+chunk.chunk_index}
+              className="v2-reader-page"
+              style={{backgroundColor:textBackground}}
+              role="region" aria-label={
+                "阅读第 "+(chunk.chunk_index+1)+" 段"+(pageNumber===0?"，左页或单页":"，右页")
+              }
+              tabIndex={0}
+              onKeyDown={(event)=>{
+                // Only the focused page surface uses arrow shortcuts.
+                // Text selection, links, menus and editors retain native keys.
+                if(event.target!==event.currentTarget || event.altKey ||
+                   event.ctrlKey || event.metaKey || event.shiftKey ||
+                   !["ArrowLeft","ArrowRight"].includes(event.key))return;
+                event.preventDefault();
+                const direction=event.key==="ArrowRight"?1:-1;
+                if(!working)void read(readingPageIndex(pageStart,direction,wideSpread));
+              }}>
+              <div className="v2-reader-folio">
+                <span>{pageNumber===0?"Ⅰ":"Ⅱ"}</span>
+                <span>段落 {chunk.chunk_index+1}</span>
+              </div>
+              <V2Annotations client={client} roomId={roomId} userId={userId}
+                chunkIndex={chunk.chunk_index} body={chunk.body}
+                fontSize={fontSize} lineHeight={lineHeight}
+                showAnnotations={annotationsShown}
+                readingAnchor={readingAnchor?.chunk_index===chunk.chunk_index
+                  ? readingAnchor.char_offset : null}
+                onSetReadingPosition={(offset)=>{
+                  void saveExactPosition(chunk.chunk_index,offset);
+                }}/>
+            </article>
+          ))}
+          {wideSpread && chunks.length===1 && (
+            <div className="v2-reader-page v2-reader-page-empty"
+              role="note" aria-label="右页没有可读取的下一段">
+              <p>下一段暂不可读</p>
+              <p className="mt-2 text-xs">可能尚未上传，或本次读取额度已用完。</p>
+            </div>
+          )}
+        </div>
+      )}
       <V2GlassDock
         annotationsShown={annotationsShown}
         activePanel={activePanel}
