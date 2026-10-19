@@ -27,6 +27,7 @@ type Props = {
   fontSize?: number;
   lineHeight?: number;
   showAnnotations?: boolean;
+  activityRevision?: number;
   readingAnchor?: number | null;
   onSetReadingPosition?: (offset:number)=>void;
 };
@@ -46,7 +47,7 @@ function validHighlight(value: unknown): value is HighlightRow {
 }
 
 /** All note positions are relative to one immutable, codepoint-indexed chunk. */
-export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSize = 16, lineHeight = 1.9, showAnnotations = true, readingAnchor = null, onSetReadingPosition }: Props) {
+export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSize = 16, lineHeight = 1.9, showAnnotations = true, activityRevision = 0, readingAnchor = null, onSetReadingPosition }: Props) {
   const textRef = useRef<HTMLDivElement>(null);
   const positionMarkerRef=useRef<HTMLSpanElement>(null);
   const [annotations, setAnnotations] = useState<HighlightRow[]>([]);
@@ -84,7 +85,7 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
   useEffect(() => {
     const timer = window.setTimeout(() => { void refresh(); }, 0);
     return () => window.clearTimeout(timer);
-  }, [refresh]);
+  }, [refresh,activityRevision]);
 
   const runs = useMemo(
     () => buildOverlappingRuns(body, annotations),
@@ -283,7 +284,7 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
           </div>
         </details>
       )}
-      <V2InkOverlay client={client} roomId={roomId}
+      <V2InkOverlay activityRevision={activityRevision} client={client} roomId={roomId}
         chunkIndex={chunkIndex} userId={userId} enabled={showAnnotations}
         selectedText={selected} textRootRef={textRef}>
       <div
@@ -470,7 +471,7 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
                   )}
                 </div>
               )}
-              <V2NoteReplies client={client} roomId={roomId} noteId={note.id}
+              <V2NoteReplies activityRevision={activityRevision} client={client} roomId={roomId} noteId={note.id}
                 userId={userId} visibility={note.visibility} />
             </article>
           ))}
