@@ -101,7 +101,7 @@ export function V2Discovery({client,userId,rooms,onRoomsChanged}:{
   return ()=>{window.clearTimeout(handle);epochCounter.current++;};
  },[refresh,userId]);
 
- const action=async(run:()=>Promise<{data:unknown;error:unknown}>,success:string,after=false)=>{
+ const action=async(run:()=>PromiseLike<{data:unknown;error:unknown}>,success:string,after=false)=>{
   if(busy)return;
   setBusy(true);
   try{
