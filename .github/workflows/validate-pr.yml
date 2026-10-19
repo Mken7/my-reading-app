@@ -78,7 +78,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check isolated database security policies
         run: |
-          psql -v ON_ERROR_STOP=1 -f tests/sql/reading_room_lifecycle_v2_smoke.sql
+          psql -v ON_ERROR_STOP=1 -f tests/sql/reading_presence_v2_smoke.sql
         env:
           PGHOST: localhost
           PGPORT: 5432
