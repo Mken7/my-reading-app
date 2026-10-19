@@ -13,6 +13,7 @@ import {
   locateTextOffset, paddedTextRect, validTextAnchor,
   type PlainRect, type TextAnchor,
 } from "@/lib/v2/textAnchor";
+import { singleLineInkBounds, type InkAnchorLayout } from "@/lib/v2/inkReflow";
 
 type Props = {
   client: SupabaseClient;
@@ -29,6 +30,7 @@ type RawInk = InkShape & {
   created_at: string;
   anchor_start: number | null;
   anchor_end: number | null;
+  anchor_layout: InkAnchorLayout;
 };
 
 type PositionedInk = { shape: RawInk; bounds: PlainRect };
@@ -44,7 +46,10 @@ function validInkRow(raw: unknown): raw is RawInk {
   const row = raw as Record<string, unknown>;
   const start = row.anchor_start;
   const end = row.anchor_end;
-  return typeof row.id === "string" &&
+  return (row.anchor_layout === "bounding_v1" ||
+    row.anchor_layout === "single_line_v2") &&
+    (row.anchor_layout !== "single_line_v2" || start !== null) &&
+    typeof row.id === "string" &&
     typeof row.author_id === "string" &&
     typeof row.created_at === "string" &&
     (row.visibility === "private" || row.visibility === "shared") &&
@@ -66,6 +71,7 @@ function textBounds(
   container: HTMLElement,
   textRoot: HTMLElement,
   anchor: TextAnchor | null,
+  singleLineOnly = false,
 ): PlainRect | null {
   const rootRect = textRoot.getBoundingClientRect();
   const parentRect = container.getBoundingClientRect();
@@ -95,6 +101,9 @@ function textBounds(
   const range = document.createRange();
   range.setStart(nodes[first.segmentIndex], first.utf16Offset);
   range.setEnd(nodes[last.segmentIndex], last.utf16Offset);
+  if (singleLineOnly) {
+    return singleLineInkBounds(Array.from(range.getClientRects()), parentRect);
+  }
   const rect = range.getBoundingClientRect();
   return paddedTextRect(rect, parentRect);
 }
@@ -146,6 +155,7 @@ export function V2InkOverlay({
   const [visibility, setVisibility] = useState<"private" | "shared">("private");
   const [saved, setSaved] = useState<RawInk[]>([]);
   const [positioned, setPositioned] = useState<PositionedInk[]>([]);
+  const [hiddenByWrap,setHiddenByWrap] = useState(0);
   const [activeAnchor, setActiveAnchor] = useState<TextAnchor | null>(null);
   const [draftBounds, setDraftBounds] = useState<PlainRect | null>(null);
   const [draft, setDraft] = useState<InkPoint[]>([]);
@@ -158,7 +168,7 @@ export function V2InkOverlay({
 
   const load = useCallback(async () => {
     const { data, error } = await client.from("reading_ink_v2")
-      .select("id,author_id,kind,points,visibility,created_at,anchor_start,anchor_end")
+      .select("id,author_id,kind,points,visibility,created_at,anchor_start,anchor_end,anchor_layout")
       .eq("room_id",roomId).eq("chunk_index",chunkIndex)
       .order("created_at",{ascending:true}).limit(150);
     if (error) {
@@ -179,15 +189,21 @@ export function V2InkOverlay({
     if (!container || !root) return;
     let animation = 0;
     const measure = () => {
+      let wrapped=0;
       const next = saved.flatMap((shape) => {
         const anchor = shape.anchor_start === null || shape.anchor_end === null
           ? null
           : { start: shape.anchor_start, end: shape.anchor_end };
-        const bounds = textBounds(container, root, anchor);
+        const bounds = textBounds(
+          container, root, anchor, shape.anchor_layout === "single_line_v2",
+        );
+        if (!bounds && shape.anchor_layout === "single_line_v2") wrapped++;
         return bounds ? [{ shape, bounds }] : [];
       });
       setPositioned(next);
-      setDraftBounds(activeAnchor ? textBounds(container,root,activeAnchor) : null);
+      setHiddenByWrap(wrapped);
+      setDraftBounds(activeAnchor ?
+        textBounds(container,root,activeAnchor,true) : null);
     };
     const schedule = () => {
       window.cancelAnimationFrame(animation);
@@ -196,6 +212,7 @@ export function V2InkOverlay({
     schedule();
     const observer = new ResizeObserver(schedule);
     observer.observe(root);
+    observer.observe(container);
     window.addEventListener("resize",schedule);
     return () => {
       window.cancelAnimationFrame(animation);
@@ -256,14 +273,36 @@ export function V2InkOverlay({
   }
 
   function chooseTool(kind: InkKind) {
-    if (!selectedText || !draftBounds && !textRootRef.current) {
+    const container=containerRef.current;
+    const root=textRootRef.current;
+    if (!selectedText || !container || !root) {
       setNotice("请先在正文选中要圈注的文字，再选择绘图工具。");
+      return;
+    }
+    if (!textBounds(container,root,selectedText,true)) {
+      setNotice("该选区跨越多行。请只选中同一行文字绘图，避免换行导致图形变形。");
       return;
     }
     setActiveAnchor({ ...selectedText });
     setMode(kind);
     setDraft([]);
     setNotice("");
+  }
+
+  function preset(kind:"ellipse" | "arrow") {
+    const container=containerRef.current;
+    const root=textRootRef.current;
+    if(!selectedText || !container || !root ||
+       !textBounds(container,root,selectedText,true)){
+      setNotice("快捷绘图需要先选中同一行上的文字。");
+      return;
+    }
+    setActiveAnchor({...selectedText});
+    setMode(kind);
+    setDraft(kind === "ellipse"
+      ? [{x:50,y:100},{x:950,y:900}]
+      : [{x:70,y:780},{x:930,y:200}]);
+    setNotice("已生成可撤销的未保存图形。请核对私人/共享范围后点击保存。");
   }
 
   async function save() {
@@ -274,6 +313,7 @@ export function V2InkOverlay({
       room_id: roomId,chunk_index: chunkIndex,author_id: userId,
       kind: mode,points: draft,visibility,
       anchor_start: activeAnchor.start,anchor_end: activeAnchor.end,
+      anchor_layout: "single_line_v2",
     });
     if (error) {
       setNotice("保存失败：可能是权限不足、文字选区失效或已达到笔迹上限。");
@@ -334,12 +374,22 @@ export function V2InkOverlay({
             </button>
           ))}
           <button className="rounded-lg border px-2.5 py-1.5 text-xs"
+            type="button" disabled={busy || !selectedText}
+            onClick={() => preset("ellipse")}>
+            快速圈注（键盘可用）
+          </button>
+          <button className="rounded-lg border px-2.5 py-1.5 text-xs"
+            type="button" disabled={busy || !selectedText}
+            onClick={() => preset("arrow")}>
+            快速箭头（键盘可用）
+          </button>
+          <button className="rounded-lg border px-2.5 py-1.5 text-xs"
             type="button" disabled={busy} onClick={() => { void load(); }}>
             刷新笔迹
           </button>
           <span className="w-full text-xs text-[#817668]">
             {selectedText
-              ? "已选中文字，可以画圈、画箭头或自由画（跨行可能出现形状变化）。"
+              ? "请选中同一行文字绘图；遇到跨行重排时，新笔迹暂时隐藏而非拉伸。"
               : "先选中一处文字，再选择手绘工具。旧笔迹仍可显示。"}
           </span>
           {mode !== "read" && (
@@ -398,6 +448,13 @@ export function V2InkOverlay({
         )}
       </div>
       {notice && enabled && <p role="status" className="mt-2 text-xs text-[#76563a]">{notice}</p>}
+      {enabled && hiddenByWrap > 0 && (
+        <p role="status" className="mt-2 text-xs text-[#76563a]">
+          有 {hiddenByWrap} 条单行笔迹的文字现在跨行换行，已暂时隐藏图形以防失真。
+          调整字号或屏幕宽度使原文字回到同一行即可重新显示。
+          管理列表中的原记录不会被删除。
+        </p>
+      )}
       {enabled && saved.length > 0 && (
         <div className="mt-2 space-y-2">
           <p className="text-xs text-[#817668]">
