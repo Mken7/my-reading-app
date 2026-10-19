@@ -144,7 +144,7 @@ $$;
 CREATE FUNCTION public.v2_request_discovered_room(target_room uuid)
 RETURNS text LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=''
 AS $$
-DECLARE actor uuid:=auth.uid(); tries integer; owner uuid; state text;
+DECLARE actor uuid:=auth.uid(); tries integer; owner uuid; room_state text;
   prior_status text;
 BEGIN
  IF actor IS NULL THEN RETURN 'unavailable'; END IF;
@@ -158,9 +158,9 @@ BEGIN
  RETURNING attempts INTO tries;
  IF tries>5 THEN RETURN 'rate_limited'; END IF;
  IF target_room IS NULL THEN RETURN 'unavailable'; END IF;
- SELECT owner_id,state INTO owner,state FROM public.reading_rooms_v2
+ SELECT r.owner_id,r.state INTO owner,room_state FROM public.reading_rooms_v2 r
  WHERE id=target_room FOR UPDATE;
- IF owner IS NULL OR owner=actor OR state IS DISTINCT FROM 'active'
+ IF owner IS NULL OR owner=actor OR room_state IS DISTINCT FROM 'active'
  OR public.v2_is_discovery_blocked(actor,owner)
  OR NOT EXISTS(SELECT 1 FROM public.reading_directory_v2 d
    WHERE d.room_id=target_room AND d.listed)
