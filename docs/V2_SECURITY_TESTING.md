@@ -65,7 +65,7 @@ CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_import_v2_sm
 - [x] Add opt-in isolated V2 email login and owner-approval preview route (requires separate staging credentials, never activated in the normal build).
 - [ ] Confirm the preview with real Supabase Auth in a non-production environment; prevent account-farm / IP-scale guessing before public exposure.
 - [x] Add limited-size member-only content RPC and per-user database read/upload quotas, verified with isolated PostgreSQL tests.
-- [x] Add locally parsed TXT/EPUB/PDF-text preview, explicit rights confirmation, PNG-free worker-only PDF.js extraction, and exact-match immutable upload retries without quota double-charging. CI includes true Chromium PDF decoding and staging-only PostgreSQL security checks.
+- [x] Add locally parsed TXT/EPUB/PDF-text preview, explicit rights confirmation, PNG-free worker-only PDF.js extraction, and exact-match immutable upload retries without quota double-charging. CI includes actual Chromium EPUB/DEFLATE and PDF.js decoding and staging-only PostgreSQL security checks.
 - [x] Add chapter indexes, per-account reading progress with stale-device conflict detection, and independently overlapping private/shared text notes, with isolated database and Unicode tests.
 - [x] Add bounded hand-drawn circles/arrows/strokes and private/shared threaded replies with isolated SQL and geometry tests.
 - [x] Introduce optional text-relative anchored ink with legacy-stroke compatibility, Unicode/emoji range tests and paragraph reflow recalculation.
