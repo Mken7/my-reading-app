@@ -144,13 +144,14 @@ RESET ROLE;
 SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000013',false);
 SET ROLE authenticated;
 SELECT public.v2_create_room_invite(current_setting('test.blocked_room')::uuid) AS code_b \gset
+SELECT set_config('test.code_b',:'code_b',false);
 RESET ROLE;
 SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000012',false);
 SET ROLE authenticated;
 DO $blocked_invite$
 BEGIN
  BEGIN
-  IF public.v2_request_room_join(:'code_b')='submitted' THEN
+  IF public.v2_request_room_join(current_setting('test.code_b'))='submitted' THEN
    RAISE EXCEPTION 'blocked user joined via six-character invitation';
   END IF;
  EXCEPTION WHEN insufficient_privilege THEN NULL;
