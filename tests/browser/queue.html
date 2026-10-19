@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"/><title>V2 draft queue browser acceptance</title></head>
+<body>
+<main>
+  <h1>V2 IndexedDB acceptance</h1>
+  <p id="browser-result">PENDING</p>
+</main>
+<script type="module">
+import { addAtomicPending, listAtomicPending, recoverAtomicPending, removeAtomicPending } from "./compiled/atomicPending.js";
+import { browserAtomicPendingStore, probeBrowserDraftDatabase } from "./compiled/browserAtomicPending.js";
+import { exportEncryptedPendingBundle } from "./compiled/portablePending.js";
+
+const status=document.getElementById("browser-result");
+function assert(value,message) {
+  if (!value) throw new Error(message);
+}
+const uuid=(n)=>"12345678-1234-4123-8123-"+String(n).padStart(12,"0");
+const scope={
+  userId:"browser-e2e-user",roomId:"browser-e2e-room",kind:"highlight",targetId:"71",
+};
+const passphrase="browser-idb-integration-secret";
+const message=(n,privacy="private")=>JSON.stringify({
+  v:2,body:"从浏览器里加密的汉字😀 "+n,operationId:uuid(n),
+  start:0,end:2,visibility:privacy,
+});
+try {
+  await probeBrowserDraftDatabase();
+  await Promise.all([
+    addAtomicPending(browserAtomicPendingStore,scope,message(1),passphrase),
+    addAtomicPending(browserAtomicPendingStore,scope,message(2),passphrase),
+    addAtomicPending(browserAtomicPendingStore,scope,message(3,"shared"),passphrase),
+  ]);
+  const all=await listAtomicPending(browserAtomicPendingStore,scope);
+  assert(all.length===3,"concurrent write count mismatch");
+  assert(all.includes(uuid(1)) && all.includes(uuid(2)) && all.includes(uuid(3)),
+    "concurrent writes lost UUID");
+  assert(await recoverAtomicPending(browserAtomicPendingStore,scope,uuid(3),passphrase)===
+    message(3,"shared"),"recovery changed shared/privacy metadata");
+  const exportFile=await exportEncryptedPendingBundle(browserAtomicPendingStore,scope);
+  assert(!exportFile.includes("从浏览器里加密") &&
+    !exportFile.includes("browser-e2e-user"),"plaintext leaked into exported bundle");
+  let rejected=false;
+  try {
+    await recoverAtomicPending(browserAtomicPendingStore,scope,uuid(1),"incorrect-passphrase-1234");
+  } catch { rejected=true; }
+  assert(rejected,"incorrect passphrase decrypted protected draft");
+  rejected=false;
+  try {
+    await addAtomicPending(browserAtomicPendingStore,scope,message(1,"shared"),passphrase);
+  } catch { rejected=true; }
+  assert(rejected,"duplicate UUID overwrote old visibility");
+  await removeAtomicPending(browserAtomicPendingStore,scope,uuid(2));
+  const after=await listAtomicPending(browserAtomicPendingStore,scope);
+  assert(after.length===2 && !after.includes(uuid(2)),
+    "delete removed incorrect rows");
+  assert(await recoverAtomicPending(browserAtomicPendingStore,scope,uuid(1),passphrase)===
+    message(1),"durable read failed");
+  // Operations above each open a new IDBDatabase connection; no persistent
+  // in-memory index is available to hide disk read failures.
+  assert((await listAtomicPending(browserAtomicPendingStore,scope)).length===2,
+    "new IndexedDB transaction lost stored state");
+  await Promise.all([uuid(1),uuid(3)].map(id=>
+    removeAtomicPending(browserAtomicPendingStore,scope,id)));
+  status.textContent="BROWSER_TEST_PASS";
+} catch(error) {
+  status.textContent="BROWSER_TEST_FAIL: "+String(error && error.message || error);
+}
+</script>
+</body></html>
