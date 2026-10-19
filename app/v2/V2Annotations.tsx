@@ -7,6 +7,8 @@ import { V2InkOverlay } from "./V2InkOverlay";
 import { V2NoteReplies } from "./V2NoteReplies";
 import { V2EncryptedDraft } from "./V2EncryptedDraft";
 import { removeEncryptedPending,browserPendingMutex } from "@/lib/v2/draftQueue";
+import { removeAtomicPending } from "@/lib/v2/atomicPending";
+import { browserAtomicPendingStore } from "@/lib/v2/browserAtomicPending";
 
 type HighlightRow = V2HighlightRange & {
   body: string;
@@ -130,7 +132,13 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
       try {
         // Only the acknowledged operation may be removed. Do not discard a
         // different unsent legacy single-slot backup for this same target.
-        await removeEncryptedPending(window.localStorage,draftScope,submissionId,browserPendingMutex);
+        const cleanups=await Promise.allSettled([
+          removeAtomicPending(browserAtomicPendingStore,draftScope,submissionId),
+          removeEncryptedPending(window.localStorage,draftScope,submissionId,browserPendingMutex),
+        ]);
+        if (cleanups.some((result)=>result.status==="rejected")) {
+          throw new Error("本机存在尚未清理的已发送密文");
+        }
         setDraftBackupRevision((revision)=>revision+1);
       } catch {
         setMessage("批注已发送成功，但本地加密备份未能自动清理，请手动删除。");
