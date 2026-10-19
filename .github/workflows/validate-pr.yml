@@ -48,6 +48,7 @@ jobs:
           lib/v2/browserAtomicPending.ts lib/v2/portablePending.ts
           lib/v2/readingProgressSync.ts lib/v2/inkReflow.ts
           lib/v2/readerLayout.ts lib/v2/pdf.ts lib/v2/epub.ts
+          lib/v2/authSafety.ts
       - name: Exercise IndexedDB in a real headless browser
         run: node tests/browser/run-indexeddb.cjs
       - name: Verify single/mobile and two-page/desktop responsive reading layout
