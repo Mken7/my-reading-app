@@ -133,7 +133,8 @@ export function V2Preview() {
   }, [client]);
 
   const loadRooms = useCallback(async () => {
-    if (!client || !session) return;
+    if (!client || !session || !session.user.email_confirmed_at ||
+       recoveryActiveRef.current) return;
     const authEpoch=authEpochRef.current;
     const loadEpoch=++loadEpochRef.current;
     const stillCurrent=()=>authEpoch===authEpochRef.current &&
@@ -206,13 +207,15 @@ export function V2Preview() {
   }, [client, session]);
 
   useEffect(() => {
-    if (!client || !session) return;
+    if (!client || !session || !session.user.email_confirmed_at ||
+       recoveryActive) return;
     const timer = window.setTimeout(() => { void loadRooms(); }, 0);
     return () => window.clearTimeout(timer);
-  }, [client, session, loadRooms]);
+  }, [client, session, loadRooms, recoveryActive]);
 
   useEffect(()=>{
-    if(!client || !session)return;
+    if(!client || !session || !session.user.email_confirmed_at ||
+       recoveryActive)return;
     const onReturn=()=>{
       if(!document.hidden)void loadRooms();
     };
@@ -222,7 +225,7 @@ export function V2Preview() {
       window.removeEventListener("focus",onReturn);
       document.removeEventListener("visibilitychange",onReturn);
     };
-  },[client,session,loadRooms]);
+  },[client,session,loadRooms,recoveryActive]);
 
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
