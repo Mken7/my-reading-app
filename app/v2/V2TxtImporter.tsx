@@ -232,7 +232,7 @@ export function V2TxtImporter({ client, roomId, onComplete }: Props) {
           <label className="block text-xs">
             首个章节目录编号（0—199，已有目录不可更改）
             <input type="number" className={fieldClass + " ml-2 w-24"}
-              min={0} max={199} step={1} disabled={uploading || uploaded>0}
+              min={0} max={199} step={1} disabled={uploading || chaptersPublished>0}
               value={chapterStart}
               onChange={(e)=>setChapterStart(Number(e.target.value))}/>
           </label>
