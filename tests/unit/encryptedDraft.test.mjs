@@ -50,6 +50,13 @@ test("wrong passphrases, tampering and another user's scope cannot unlock",async
   for(const other of others) {
     assert.equal(await recoverEncryptedDraft(memory,other,pass),null);
   }
+  // Moving ciphertext to a different scope key still fails: AES-GCM AAD
+  // binds the record to its original reader, room, type and target.
+  const copiedScope = others[0];
+  memory.setItem(await encryptedDraftKey(copiedScope),
+    memory.getItem(await encryptedDraftKey(scope)));
+  await assert.rejects(
+    recoverEncryptedDraft(memory,copiedScope,pass),/解锁失败/);
   const key=await encryptedDraftKey(scope);
   const value=JSON.parse(memory.getItem(key));
   value.ciphertext=value.ciphertext.replace(/^./,value.ciphertext[0]==="A"?"B":"A");
