@@ -40,7 +40,9 @@ Migration order (isolated v2 names only):
 14. `supabase/migrations/20261019007000_v2_character_reading_position.sql` adds Unicode-codepoint offsets to the private reading cursor, preserves the legacy three-argument API, and exposes read/update RPCs with strict CAS and private membership checks. See `docs/MODULE_08_ACCEPTANCE.md`.
 15. `supabase/migrations/20261019008000_v2_ink_reflow_policy.sql` records single-line reflow-safe geometry, revokes ink visibility for former/closed-room members, and includes the layout mode in chained ink audit payloads. See `docs/MODULE_07_ACCEPTANCE.md`.
 
-CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_ink_reflow_v2_smoke.sql` (which includes the prior access/audit smoke tests) in an **ephemeral PostgreSQL 16 service**, independent of the real Supabase database. Tests assert owner access, partner privacy, anonymous and third-user denial, two-member capacity, field immutability, private audit access, hash-chain consistency, invite rotation, owner approval, replay denial, actor-level throttling, issuance quotas, protected chunk reads, immutable owner uploads and per-user read/write limits. The frontend continues to require strict lint + TypeScript/static export.
+16. `supabase/migrations/20261019009000_v2_note_management.sql` adds version-checked editing, soft retraction, annotation quotas, and stricter parent-child access. See `docs/MODULE_06_ACCEPTANCE.md`.
+
+CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_note_management_v2_smoke.sql` (which includes the prior access/audit smoke tests) in an **ephemeral PostgreSQL 16 service**, independent of the real Supabase database. Tests assert owner access, partner privacy, anonymous and third-user denial, two-member capacity, field immutability, private audit access, hash-chain consistency, invite rotation, owner approval, replay denial, actor-level throttling, issuance quotas, protected chunk reads, immutable owner uploads and per-user read/write limits. The frontend continues to require strict lint + TypeScript/static export.
 
 ## Important limits
 
