@@ -9,7 +9,7 @@
 <script type="module">
 import { addAtomicPending, listAtomicPending, recoverAtomicPending, removeAtomicPending } from "./compiled/atomicPending.js";
 import { browserAtomicPendingStore, probeBrowserDraftDatabase } from "./compiled/browserAtomicPending.js";
-import { exportEncryptedPendingBundle } from "./compiled/portablePending.js";
+import { exportEncryptedPendingBundle, importEncryptedPendingBundle } from "./compiled/portablePending.js";
 
 const status=document.getElementById("browser-result");
 function assert(value,message) {
@@ -61,6 +61,14 @@ try {
   assert((await listAtomicPending(browserAtomicPendingStore,scope)).length===2,
     "new IndexedDB transaction lost stored state");
   await Promise.all([uuid(1),uuid(3)].map(id=>
+    removeAtomicPending(browserAtomicPendingStore,scope,id)));
+  const imported=await importEncryptedPendingBundle(
+    browserAtomicPendingStore,scope,exportFile,passphrase,
+  );
+  assert(imported===3,"encrypted file import lost a note");
+  assert(await recoverAtomicPending(browserAtomicPendingStore,scope,uuid(3),passphrase)===
+    message(3,"shared"),"portable backup changed visible scope");
+  await Promise.all([uuid(1),uuid(2),uuid(3)].map(id=>
     removeAtomicPending(browserAtomicPendingStore,scope,id)));
   status.textContent="BROWSER_TEST_PASS";
 } catch(error) {
