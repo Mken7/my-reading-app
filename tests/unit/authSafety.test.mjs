@@ -25,7 +25,9 @@ test("password reset redirect preserves only known current V2 route",()=>{
     "https://app.example.org/v2/");
   assert.equal(recoveryReturnUrl("https://example.github.io/my-reading-app/v2/?code=abc"),
     "https://example.github.io/my-reading-app/v2/");
-  for(const input of ["https://evil.com/v2//phish",
+  assert.equal(recoveryReturnUrl("http://localhost:3000/v2/?code=abc"),
+    "http://localhost:3000/v2/");
+  for(const input of ["http://untrusted.example.com/v2/", "https://evil.com/v2//phish",
     "https://user:pass@example.com/v2/",
     "https://app.example.org/profile?redirect=/v2",
     "https://app.example.org/book/v2/more",
