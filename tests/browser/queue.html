@@ -12,6 +12,7 @@ import { browserAtomicPendingStore, probeBrowserDraftDatabase } from "./compiled
 import { exportEncryptedPendingBundle, importEncryptedPendingBundle } from "./compiled/portablePending.js";
 import { reconcileCursor, validReadingCursor } from "./compiled/readingProgressSync.js";
 import { groupedVisualLines, singleLineInkBounds } from "./compiled/inkReflow.js";
+import {recoveryReturnUrl,validStagingEndpoint,validNewPassword,authEventView} from "./compiled/authSafety.js";
 
 const status=document.getElementById("browser-result");
 function assert(value,message) {
@@ -126,6 +127,23 @@ try {
   assert(singleLineInkBounds(rects(),parentRect())!==null,
     "drawing did not return to its original text anchor after reflow");
   outer.remove();
+
+  // Actual same-origin browser URI: strip query/hash tokens from reset links.
+  const resetPage=location.origin+"/v2/?code=super-secret#access_token=private";
+  assert(recoveryReturnUrl(resetPage)===location.origin+"/v2/",
+    "password recovery leaked a token or accepted external return destinations");
+  assert(recoveryReturnUrl(location.origin+"/another-route")===null,
+    "password recovery accepted an arbitrary route");
+  assert(validStagingEndpoint("https://safe-staging.supabase.co") &&
+    !validStagingEndpoint("https://warhfmpfnlgzofbeuikb.supabase.co") &&
+    !validStagingEndpoint("https://safe-staging.supabase.co.bad-domain.com"),
+    "staging endpoint allowed unsafe or legacy Supabase origin");
+  assert(!validNewPassword("short") && validNewPassword("a".repeat(12)),
+    "minimum-password validation differs in real browser");
+  assert(authEventView("SIGNED_IN",false)==="normal" &&
+    authEventView("PASSWORD_RECOVERY",false)==="password_reset" &&
+    authEventView("SIGNED_OUT",true)==="signed_out",
+    "sign-in erroneously authorized a recovery-only password change");
 
   status.textContent="BROWSER_TEST_PASS";
 } catch(error) {
