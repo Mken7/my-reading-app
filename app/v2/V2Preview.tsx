@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import type { Session } from "@supabase/supabase-js";
 import { getV2StagingClient, v2StagingConfigured } from "@/lib/v2/staging";
 import { V2ProtectedBook } from "./V2ProtectedBook";
+import { V2Discovery } from "./V2Discovery";
 import {authEventView,recoveryReturnUrl,validNewPassword,type AuthView} from "@/lib/v2/authSafety";
 
 type RoomRow = {
@@ -786,6 +787,9 @@ export function V2Preview() {
           })}
         </div>
       </section>
+      <V2Discovery key={session.user.id} client={client}
+        userId={session.user.id} rooms={rooms}
+        onRoomsChanged={()=>{void loadRooms();}} />
       <p className="text-xs leading-6 text-[#817668]">
         本预览接入独立 V2 书房、受保护的章节正文与私人/共享批注。
         邀请码不可代替房主批准；私人书签和草稿不会因加入申请而向申请人公开。
