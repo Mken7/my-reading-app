@@ -21,6 +21,8 @@ export interface AtomicPendingStore {
   get(id: string): Promise<EncryptedPendingRow | undefined>;
   /** A single serializable DB transaction enforces unique id + quota. */
   insert(row: EncryptedPendingRow, limit: number): Promise<void>;
+  /** An all-or-nothing import in one IDB readwrite transaction. */
+  insertMany(rows: EncryptedPendingRow[], limit: number): Promise<void>;
   remove(id: string): Promise<void>;
 }
 
