@@ -96,8 +96,9 @@ export function V2Discovery({client,userId,rooms,onRoomsChanged}:{
  },[client]);
 
  useEffect(()=>{
+  const epochCounter=epochRef;
   const handle=window.setTimeout(()=>{void refresh();},0);
-  return ()=>{window.clearTimeout(handle);epochRef.current++;};
+  return ()=>{window.clearTimeout(handle);epochCounter.current++;};
  },[refresh,userId]);
 
  const action=async(run:()=>Promise<{data:unknown;error:unknown}>,success:string,after=false)=>{
@@ -120,7 +121,7 @@ export function V2Discovery({client,userId,rooms,onRoomsChanged}:{
  const owners=rooms.filter(r=>r.owner_id===userId&&r.state==="active");
  const drafted=(id:string)=>drafts[id]??{title:"",about:""};
  const updateDraft=(id:string,part:Partial<Draft>)=>
-  setDrafts(old=>({...old,[id]:{...drafted(id),...part}}));
+  setDrafts(old=>({...old,[id]:{...(old[id]??{title:"",about:""}),...part}}));
 
  const publish=(event:FormEvent<HTMLFormElement>,id:string,enable:boolean)=>{
   event.preventDefault();
