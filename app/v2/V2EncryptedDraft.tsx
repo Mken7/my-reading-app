@@ -7,7 +7,7 @@ import {
 } from "@/lib/v2/encryptedDraft";
 import {
   addEncryptedPending,listEncryptedPending,recoverEncryptedPending,
-  removeEncryptedPending,
+  removeEncryptedPending,browserPendingMutex,
 } from "@/lib/v2/draftQueue";
 
 type Props = {
@@ -53,11 +53,24 @@ export function V2EncryptedDraft({
     return ()=>window.clearTimeout(id);
   },[check,refreshToken]);
 
+  // Changes from ANOTHER tab do not trigger React state in this tab.
+  // Re-read only the current reader's queue when its hashed index changes.
+  useEffect(() => {
+    const refreshFromOtherTab=(event:StorageEvent) => {
+      if (event.storageArea===window.localStorage &&
+          (event.key===null || event.key.startsWith("reading-v2-pending-index-v1:"))) {
+        void check();
+      }
+    };
+    window.addEventListener("storage",refreshFromOtherTab);
+    return ()=>window.removeEventListener("storage",refreshFromOtherTab);
+  },[check]);
+
   async function enqueue() {
     if (busy || disabled || !draftValue || password.length < 12) return;
     setBusy(true);
     try {
-      await addEncryptedPending(window.localStorage,scope,draftValue,password);
+      await addEncryptedPending(window.localStorage,scope,draftValue,password,browserPendingMutex);
       setPendingIds(await listEncryptedPending(window.localStorage,scope));
       setMessage("此条待发送内容已加密加入本机队列。恢复后必须手动确认发送。");
     } catch(error) {
@@ -88,7 +101,7 @@ export function V2EncryptedDraft({
     if (busy || disabled || confirmRemove!==id) return;
     setBusy(true);
     try {
-      await removeEncryptedPending(window.localStorage,scope,id);
+      await removeEncryptedPending(window.localStorage,scope,id,browserPendingMutex);
       setPendingIds(await listEncryptedPending(window.localStorage,scope));
       setMessage("该条本机密文已清除，不影响服务器上已经发送的笔记。");
     } catch(error) {
@@ -187,6 +200,7 @@ export function V2EncryptedDraft({
           <p className="text-xs font-medium">本机待发送：{pendingIds.length} / 10</p>
           <p className="mt-1 text-xs text-[#817668]">
             只展示序号，不预览未解密的私人内容。恢复后请检查隐私范围并自行发送。
+            多标签页安全修改需要浏览器支持 Web Locks；不支持时会阻止队列修改。
           </p>
           {pendingIds.length===0 && <p className="mt-2 text-xs">暂无待发送记录。</p>}
           <div className="mt-2 space-y-2">
