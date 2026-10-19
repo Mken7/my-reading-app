@@ -21,13 +21,18 @@ export const MAX_PENDING_PER_TARGET = 10;
  */
 export type PendingMutex = <T>(name: string, run: () => Promise<T>) => Promise<T>;
 
-export const browserPendingMutex: PendingMutex = <T>(name: string, run: () => Promise<T>): Promise<T> => {
+export const browserPendingMutex: PendingMutex = async <T>(
+  name: string, run: () => Promise<T>,
+): Promise<T> => {
   if (typeof navigator === "undefined" || !navigator.locks?.request) {
-    return Promise.reject(new Error(
+    throw new Error(
       "当前浏览器不支持安全的多标签草稿编辑；可读取旧备份，但不能新增或清除队列项"
-    ));
+    );
   }
-  return navigator.locks.request<T>(name, async () => await run());
+  // DOM LockGrantedCallback<T> is typed as returning T, not Promise<T>.
+  // Asking for Promise<T> and awaiting the assimilated result models an
+  // async callback while keeping the lock until that callback settles.
+  return await navigator.locks.request<Promise<T>>(name, run);
 };
 
 async function withIndexLock<T>(
