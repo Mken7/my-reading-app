@@ -29,6 +29,26 @@ jobs:
       - name: Assert output was exported
         run: test -f out/index.html
 
+  browser-queue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Compile actual V2 queue modules to browser-readable JS
+        run: >
+          npx tsc
+          --module esnext --target es2022 --moduleResolution bundler
+          --rewriteRelativeImportExtensions
+          --lib dom,dom.iterable,es2022 --skipLibCheck
+          --rootDir lib/v2 --outDir tests/browser/compiled
+          lib/v2/browserAtomicPending.ts lib/v2/portablePending.ts
+      - name: Exercise IndexedDB in a real headless browser
+        run: node tests/browser/run-indexeddb.cjs
+
   database-security:
     runs-on: ubuntu-latest
     services:
