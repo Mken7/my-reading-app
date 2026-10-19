@@ -42,7 +42,7 @@
 
 这些测试只在 CI 的隔离 PostgreSQL 16 容器中执行；不能替代真实 Supabase Auth、存储、Realtime、压力测试和端到端渗透测试。
 
-新增 `tests/unit/txt.test.mjs`、`tests/unit/epub.test.mjs`、`tests/unit/pdf.test.mjs` 和 `tests/unit/overlap.test.mjs`，使用 Node 22 内置测试运行器：覆盖中文/emoji 断字、换行、章节识别、文本编码、合成 ZIP 的 STORE/DEFLATE 解压、CRC 校验、目录穿越、重复 ZIP 路径、加密标识和可疑 ZIP 膨胀。PDF.js 已在无头 Chromium 中通过真实文字层提取测试；完整 EPUB 和实际双人账号的整页浏览器/手机端到端验收仍未完成。PR 必须同时通过单元测试、严格 ESLint、Next.js TypeScript 构建与数据库安全测试。
+新增 `tests/unit/txt.test.mjs`、`tests/unit/epub.test.mjs`、`tests/unit/pdf.test.mjs` 和 `tests/unit/overlap.test.mjs`，使用 Node 22 内置测试运行器：覆盖中文/emoji 断字、换行、章节识别、文本编码、合成 ZIP 的 STORE/DEFLATE 解压、CRC 校验、目录穿越、重复 ZIP 路径、加密标识和可疑 ZIP 膨胀。PDF.js 已在无头 Chromium 中通过真实文字层提取测试；真正的 Chromium 已覆盖 EPUB ZIP/DEFLATE、XML/XHTML 文本抽取及脚本隔离，但 React 上传整页、手机真机和实际双人 Supabase 端到端验收仍未完成。PR 必须同时通过单元测试、严格 ESLint、Next.js TypeScript 构建与数据库安全测试。
 
 ## 不能马上上线的原因
 
