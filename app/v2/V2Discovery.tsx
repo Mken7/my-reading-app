@@ -102,19 +102,20 @@ export function V2Discovery({client,userId,rooms,onRoomsChanged}:{
  },[refresh,userId]);
 
  const action=async(run:()=>PromiseLike<{data:unknown;error:unknown}>,success:string,after=false)=>{
-  if(busy)return;
+  if(busy)return false;
   setBusy(true);
   try{
    const {data,error}=await run();
-   if(error){setNotice("操作未完成，请检查账号权限、书房状态及网络。");return;}
+   if(error){setNotice("操作未完成，请检查账号权限、书房状态及网络。");return false;}
    if(data===false||data==="unavailable"||data==="denied"||data==="rate_limited"){
     setNotice(data==="rate_limited"?"操作过于频繁，请明天再试。":"没有完成操作：可能已失效、无权限或书房已经满员。");
-    return;
+    return false;
    }
    setNotice(data==="already_requested"?"已经申请过，请等待房主处理。":success);
    await refresh(search.trim());
    if(after)onRoomsChanged();
-  }catch{setNotice("网络异常，结果尚未确认，请刷新查看后再决定是否重试。");}
+   return true;
+  }catch{setNotice("网络异常，结果尚未确认，请刷新查看后再决定是否重试。");return false;}
   finally{setBusy(false);}
  };
 
@@ -181,10 +182,12 @@ export function V2Discovery({client,userId,rooms,onRoomsChanged}:{
         onSubmit={e=>{
          e.preventDefault();
          if(reportDetails.trim().length<10)return;
-         void action(()=>client.rpc("v2_report_discovery_room",{
-          target_room:card.room_id,category:reportReason,note:reportDetails.trim(),
-         }),"举报已进入私密待审核队列，不会自动公开或直接处罚。");
-         setReportTarget(null);setReportDetails("");
+         void (async()=>{
+          const acknowledged=await action(()=>client.rpc("v2_report_discovery_room",{
+           target_room:card.room_id,category:reportReason,note:reportDetails.trim(),
+          }),"举报已进入私密待审核队列，不会自动公开或直接处罚。");
+          if(acknowledged){setReportTarget(null);setReportDetails("");}
+         })();
         }}>
         <label className="block text-xs">问题类型
          <select className={field+" mt-1"} value={reportReason}
