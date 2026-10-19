@@ -8,6 +8,58 @@ ALTER TABLE public.reading_highlights_v2
     (hidden_at IS NOT NULL AND hidden_by=author_id)
   );
 
+-- Limit note fanout so no individual reader can exhaust a paragraph or
+-- force another reader to render unbounded overlapping spans.
+CREATE OR REPLACE FUNCTION public.v2_guard_highlight()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=''
+AS $guard$
+DECLARE
+  content_length integer;
+  current_count integer;
+BEGIN
+  IF TG_OP='UPDATE' AND (
+    NEW.id IS DISTINCT FROM OLD.id OR
+    NEW.room_id IS DISTINCT FROM OLD.room_id OR
+    NEW.chunk_index IS DISTINCT FROM OLD.chunk_index OR
+    NEW.author_id IS DISTINCT FROM OLD.author_id OR
+    NEW.start_index IS DISTINCT FROM OLD.start_index OR
+    NEW.end_index IS DISTINCT FROM OLD.end_index OR
+    NEW.created_at IS DISTINCT FROM OLD.created_at
+  ) THEN
+    RAISE EXCEPTION 'Annotation identity and anchor cannot be changed'
+      USING ERRCODE='23514';
+  END IF;
+  SELECT pg_catalog.char_length(c.body) INTO content_length
+  FROM public.reading_chunks_v2 c
+  WHERE c.room_id=NEW.room_id AND c.chunk_index=NEW.chunk_index;
+  IF content_length IS NULL OR NEW.end_index>content_length THEN
+    RAISE EXCEPTION 'Annotation range exceeds actual paragraph'
+      USING ERRCODE='23514';
+  END IF;
+  IF TG_OP='INSERT' THEN
+    PERFORM pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(
+        NEW.room_id::text||':'||NEW.chunk_index::text||':'||NEW.author_id::text,
+        10706)
+    );
+    SELECT count(*) INTO current_count
+    FROM public.reading_highlights_v2 h
+    WHERE h.room_id=NEW.room_id AND h.chunk_index=NEW.chunk_index
+      AND h.author_id=NEW.author_id;
+    IF current_count>=60 THEN
+      RAISE EXCEPTION 'Annotation quota reached' USING ERRCODE='23514';
+    END IF;
+    NEW.revision:=1;
+    NEW.created_at:=pg_catalog.now();
+    NEW.updated_at:=NEW.created_at;
+  ELSE
+    NEW.revision:=OLD.revision+1;
+    NEW.updated_at:=pg_catalog.now();
+  END IF;
+  RETURN NEW;
+END;
+$guard$;
+
 -- Clients may INSERT and read their permitted notes but never issue raw UPDATE.
 -- Trusted optimistic concurrency RPCs own every edit and soft retraction.
 REVOKE UPDATE ON public.reading_highlights_v2 FROM authenticated;
