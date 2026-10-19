@@ -83,7 +83,7 @@ export function planPdfTextPages(pages:readonly PageText[]):TxtImportPlan{
   };
 }
 
-export async function preparePdf(bytes:Uint8Array):Promise<TxtImportPlan>{
+export async function preparePdf(bytes:Uint8Array,workerOverride?:string):Promise<TxtImportPlan>{
   if(bytes.byteLength<8 || bytes.byteLength>MAX_PDF_BYTES)
     throw new Error("PDF 为空、不完整或超过 10 MB 安全上限");
   const magic=new TextDecoder("latin1").decode(bytes.subarray(0,8));
@@ -92,9 +92,8 @@ export async function preparePdf(bytes:Uint8Array):Promise<TxtImportPlan>{
   const pdfjs=await import("pdfjs-dist/legacy/build/pdf.mjs");
   // Worker is bundled with the app by the build tool, not downloaded from
   // a third-party CDN. Documents remain local until the user opts to upload.
-  pdfjs.GlobalWorkerOptions.workerSrc=new URL(
-    "pdfjs-dist/build/pdf.worker.min.mjs",import.meta.url,
-  ).toString();
+  pdfjs.GlobalWorkerOptions.workerSrc=workerOverride ??
+    new URL("pdfjs-dist/build/pdf.worker.min.mjs",import.meta.url).toString();
   let task:ReturnType<typeof pdfjs.getDocument>|null=null;
   try {
     task=pdfjs.getDocument({
@@ -121,7 +120,9 @@ export async function preparePdf(bytes:Uint8Array):Promise<TxtImportPlan>{
   } catch(error) {
     if(error instanceof Error && /密码|扫描|超过|可提取/.test(error.message))
       throw error;
-    throw new Error("PDF 解析失败：文件可能已加密、损坏或使用不支持的字体");
+    throw new Error("PDF 解析失败：文件可能已加密、损坏或使用不支持的字体",{
+      cause:error,
+    });
   } finally {
     // PDF.js destroy() is idempotent after the PDF document is destroyed.
     if(task)await task.destroy();
