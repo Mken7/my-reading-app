@@ -74,7 +74,7 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
   const [readerTheme, setReaderTheme] = useState<"paper" | "white" | "mist">("paper");
   const [memberRoles, setMemberRoles] = useState<string[]>([]);
   const [memberError, setMemberError] = useState("");
-  const bookmarkRef = useRef<HTMLElement>(null);
+  const bookmarkRef = useRef<HTMLDetailsElement>(null);
   const catalogRef = useRef<HTMLDetailsElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const pagesRef=useRef<HTMLDivElement>(null);
@@ -276,8 +276,8 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
     setWorking(false);
   }
 
-  async function addPin(){
-    const current=chunks[0]?.chunk_index;
+  async function addPin(index?:number){
+    const current=index??chunks[0]?.chunk_index;
     if(current===undefined || pinWorking)return;
     setPinWorking(true);
     try{
@@ -380,6 +380,10 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
         每位成员每书房每小时最多读取 60 段。
       </p>
       {owner && (
+        <details className="mt-4 rounded-lg border border-[#ddd4c7] p-3">
+          <summary className="cursor-pointer text-sm font-medium">
+            房主上传与导入测试文本（需要时展开）
+          </summary>
         <form onSubmit={(event) => { void upload(event); }} className="mt-4 space-y-2">
           <label className="block text-xs">
             测试段落序号（0—1999）
@@ -398,10 +402,15 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
             上传测试段落
           </button>
         </form>
+        <V2TxtImporter client={client} roomId={roomId}
+          onComplete={() => { void refreshMetadata(); }} />
+        </details>
       )}
-      {owner && <V2TxtImporter client={client} roomId={roomId}
-        onComplete={() => { void refreshMetadata(); }} />}
-      <section ref={bookmarkRef} className="mt-4 rounded-lg border border-[#e2d9cb] bg-white/70 p-3">
+      <details ref={bookmarkRef} className="mt-4 rounded-lg border border-[#e2d9cb] bg-white/70 p-3">
+        <summary className="cursor-pointer text-sm font-medium">
+          我的私人阅读进度、章节目录及标记
+          {conflict?"（另一设备的书签需要确认）":""}
+        </summary>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h5 className="text-sm font-medium">我的阅读书签</h5>
           <button type="button" className={buttonClass} disabled={metaLoading || working}
@@ -519,7 +528,7 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
                 ))}
               </div>}
         </details>
-      </section>
+      </details>
       {activePanel && (
         <div ref={panelRef} className="mt-4 rounded-2xl border border-white/80 bg-white/75 p-4 shadow-sm">
           {activePanel === "settings" ? (
@@ -620,6 +629,12 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
               <div className="v2-reader-folio">
                 <span>{pageNumber===0?"Ⅰ":"Ⅱ"}</span>
                 <span>段落 {chunk.chunk_index+1}</span>
+                <button type="button" className="rounded-md border border-[#bbaea0] px-2 py-1 text-xs"
+                  disabled={working || pinWorking}
+                  title={"仅自己可见的第 "+(chunk.chunk_index+1)+" 段书签"}
+                  onClick={()=>{void addPin(chunk.chunk_index);}}>
+                  私人书签
+                </button>
               </div>
               <V2Annotations client={client} roomId={roomId} userId={userId}
                 chunkIndex={chunk.chunk_index} body={chunk.body}
@@ -646,12 +661,14 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
         activePanel={activePanel}
         disabled={working}
         onCatalog={() => {
+          if(bookmarkRef.current)bookmarkRef.current.open=true;
           if (catalogRef.current) {
             catalogRef.current.open = true;
             catalogRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
           }
         }}
         onBookmark={() => {
+          if(bookmarkRef.current)bookmarkRef.current.open=true;
           bookmarkRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
         }}
         onAnnotations={() => setAnnotationsShown((current) => !current)}
