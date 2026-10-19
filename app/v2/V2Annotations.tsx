@@ -48,6 +48,7 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("");
   const draftScope = { userId, roomId, kind: "highlight" as const, targetId: String(chunkIndex) };
+  const [draftBackupRevision,setDraftBackupRevision] = useState(0);
 
   const refresh = useCallback(async () => {
     const { data, error } = await client
@@ -120,6 +121,7 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
       setDraft("");
       try {
         await removeEncryptedDraft(window.localStorage,draftScope);
+        setDraftBackupRevision((revision)=>revision+1);
       } catch {
         setMessage("批注已发送成功，但本地加密备份未能自动清理，请手动删除。");
       }
@@ -193,6 +195,7 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
       {showAnnotations && (
         <V2EncryptedDraft
           scope={draftScope}
+          refreshToken={draftBackupRevision}
           draftValue={selected && draft.trim()
             ? JSON.stringify({
                 v:1,body:draft,start:selected.start,
