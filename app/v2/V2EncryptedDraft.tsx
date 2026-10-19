@@ -26,13 +26,16 @@ export function V2EncryptedDraft({
   const [busy,setBusy] = useState(false);
   const [message,setMessage] = useState("");
 
+  const { userId, roomId, kind, targetId } = scope;
   const check = useCallback(async () => {
     try {
-      setHasBackup(await hasEncryptedDraft(window.localStorage,scope));
+      setHasBackup(await hasEncryptedDraft(window.localStorage,{
+        userId,roomId,kind,targetId,
+      }));
     } catch {
       setMessage("浏览器本地存储不可用，请勿依赖离线备份。");
     }
-  }, [scope.kind,scope.roomId,scope.targetId,scope.userId]);
+  }, [userId,roomId,kind,targetId]);
 
   useEffect(() => {
     const id=window.setTimeout(()=>{ void check(); },0);
