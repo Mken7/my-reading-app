@@ -92,3 +92,20 @@ test("corrupted format rejected without plaintext fallback",async()=>{
   memory.setItem(key,"{");
   await assert.rejects(recoverEncryptedDraft(memory,scope,pass),/损坏/);
 });
+
+
+test("offline pending message retains UUID and private scope after encrypted recovery",async()=>{
+  const memory=storage();
+  const operationId="f18b0cc7-918e-4bda-8cad-834241395de2";
+  const pending={
+    v:2,body:"只能我自己看见的批注",start:1,end:5,
+    visibility:"private",operationId,
+  };
+  await saveEncryptedDraft(memory,scope,JSON.stringify(pending),pass);
+  const first=JSON.parse(await recoverEncryptedDraft(memory,scope,pass));
+  const next=JSON.parse(await recoverEncryptedDraft(memory,scope,pass));
+  assert.equal(first.operationId,operationId);
+  assert.equal(next.operationId,operationId);
+  assert.equal(next.visibility,"private");
+  assert.deepEqual(next,pending);
+});
