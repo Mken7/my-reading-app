@@ -11,6 +11,7 @@ type Props = {
   draftValue: string;
   onRestore: (value: string) => boolean;
   disabled?: boolean;
+  refreshToken?: number;
 };
 
 /**
@@ -18,7 +19,7 @@ type Props = {
  * Password is kept in this ephemeral React component state, never in storage.
  */
 export function V2EncryptedDraft({
-  scope,draftValue,onRestore,disabled = false,
+  scope,draftValue,onRestore,disabled = false,refreshToken = 0,
 }: Props) {
   const [expanded,setExpanded] = useState(false);
   const [password,setPassword] = useState("");
@@ -40,7 +41,7 @@ export function V2EncryptedDraft({
   useEffect(() => {
     const id=window.setTimeout(()=>{ void check(); },0);
     return ()=>window.clearTimeout(id);
-  },[check]);
+  },[check,refreshToken]);
 
   async function backup() {
     if (busy || disabled || !draftValue || password.length < 12) return;
