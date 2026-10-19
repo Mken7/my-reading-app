@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><title>EPUB local parser regression</title></head>
+<body>
+<h1>Browser EPUB local import safety</h1>
+<p id="browser-result">PENDING</p>
+<script type="module">
+import {prepareEpub} from "./compiled/epub.js";
+const status=document.getElementById("browser-result");
+const enc=new TextEncoder();
+const le16=(bytes,offset,n)=>new DataView(bytes.buffer).setUint16(offset,n,true);
+const le32=(bytes,offset,n)=>new DataView(bytes.buffer).setUint32(offset,n,true);
+function crc32(bytes) {
+  let value=0xffffffff;
+  for(const b of bytes){
+    value^=b;
+    for(let i=0;i<8;i++)value=(value>>>1)^((value&1)?0xedb88320:0);
+  }
+  return (value^0xffffffff)>>>0;
+}
+function zip(files){
+  let offset=0;
+  const chunks=[],headers=[];
+  for(const [filename,bodyText] of files){
+    const name=enc.encode(filename),body=enc.encode(bodyText);
+    const crc=crc32(body);
+    const local=new Uint8Array(30);
+    le32(local,0,0x04034b50);le16(local,4,20);
+    le32(local,14,crc);le32(local,18,body.length);
+    le32(local,22,body.length);le16(local,26,name.length);
+    chunks.push(local,name,body);
+
+    const central=new Uint8Array(46);
+    le32(central,0,0x02014b50);le16(central,4,20);
+    le16(central,6,20);le32(central,16,crc);
+    le32(central,20,body.length);le32(central,24,body.length);
+    le16(central,28,name.length);le32(central,42,offset);
+    headers.push(central,name);
+    offset+=local.length+name.length+body.length;
+  }
+  const size=headers.reduce((sum,chunk)=>sum+chunk.length,0);
+  const tail=new Uint8Array(22);
+  le32(tail,0,0x06054b50);le16(tail,8,files.length);
+  le16(tail,10,files.length);le32(tail,12,size);le32(tail,16,offset);
+  const all=[...chunks,...headers,tail],result=new Uint8Array(all.reduce((sum,p)=>sum+p.length,0));
+  let pos=0;
+  for(const buffer of all){result.set(buffer,pos);pos+=buffer.length;}
+  return result;
+}
+const container='<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'+
+  '<rootfiles><rootfile full-path="OPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>';
+const opf='<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf"><manifest>'+
+  '<item id="first" href="Text/a.xhtml" media-type="application/xhtml+xml"/>'+
+  '<item id="second" href="Text/b.xhtml" media-type="application/xhtml+xml"/>'+
+  '</manifest><spine><itemref idref="first"/><itemref idref="second"/></spine></package>';
+const first='<html xmlns="http://www.w3.org/1999/xhtml"><body>'+
+  '<h1>第一章</h1><p>第一段中文🐈</p><script>window.epubExecuted=true;</script></body></html>';
+const second='<html xmlns="http://www.w3.org/1999/xhtml"><body>'+
+  '<h1>第二章</h1><p>第二段😀这里也可以划线</p></body></html>';
+function file(extra=[]){
+  return zip([
+    ["mimetype","application/epub+zip"],
+    ["META-INF/container.xml",container],
+    ["OPS/content.opf",opf],
+    ["OPS/Text/a.xhtml",first],
+    ["OPS/Text/b.xhtml",second],
+    ...extra,
+  ]);
+}
+try{
+  const plan=await prepareEpub(file());
+  if(plan.chapters.length!==2 || !plan.chunks.join("").includes("第一段中文🐈") ||
+     !plan.chunks.join("").includes("第二段😀") ||
+     plan.chunks.join("").includes("window.epubExecuted") ||
+     window.epubExecuted){
+    throw Error("EPUB spine, Unicode, or inert script handling failed");
+  }
+  let unsafeRejected=false;
+  try{await prepareEpub(file([["../outside.xhtml","evil"]]));}
+  catch(error){unsafeRejected=/不安全|目录穿越/.test(String(error));}
+  if(!unsafeRejected)throw Error("ZIP path traversal was accepted");
+  let drmRejected=false;
+  try{await prepareEpub(file([["META-INF/encryption.xml","<encryption/>"]]));}
+  catch(error){drmRejected=/DRM|加密/.test(String(error));}
+  if(!drmRejected)throw Error("DRM file was accepted for plain-text parsing");
+  status.textContent="EPUB_BROWSER_PASS";
+}catch(error){
+  status.textContent="EPUB_BROWSER_FAIL:"+String(error?.message??error);
+}
+</script>
+</body></html>
