@@ -13,13 +13,13 @@
 
 ## 自动测试与边界
 
-单元测试 tests/unit/atomicPending.test.mjs 用模拟原子数据库测试：并发插入、重新创建访问对象以模拟重启、跨账号隔离、限制 10 条、重复 UUID 拒绝、篡改密文阻断。GitHub Actions 还验证严格 ESLint、TypeScript/Next.js 静态构建与隔离 PostgreSQL 权限。
+Node 单元测试 tests/unit/atomicPending.test.mjs 用模拟原子数据库测试并发插入、重复打开、跨账号隔离、10 条限制、重复 UUID 拒绝与密文篡改。tests/unit/portablePending.test.mjs 还覆盖加密文件手动跨设备传递、错误口令、身份作用域不匹配与整批原子回滚。CI 的 browser-queue job 使用真正的无头 Chromium 运行 tests/browser/queue.html，验证浏览器 IndexedDB 的并发写入、密码检查、操作去重、手动加密文件导入/导出与按 UUID 删除。另有严格 ESLint、TypeScript/Next.js 构建及隔离 PostgreSQL 权限测试。
 
-这些测试没有执行真实浏览器 IndexedDB 驱动的 UI 端到端流程；尚未在 iOS Safari、安卓 Chrome、多个真实标签页上验收。IndexedDB 事务原子性不代表断电后保证落盘；用户清理网站数据、无痕模式、磁盘损坏仍可能丢失密文。当前依旧没有跨设备自动同步，也不会联网自动上传私人草稿。
+这些测试运行了真实桌面 Chromium 中的 IndexedDB 适配层，但尚未完成整个 React 页面交互的 UI 端到端流程，也未在 iOS Safari、安卓 Chrome、多个真实标签页上验收。IndexedDB 事务原子性不代表断电后保证落盘；用户清理网站数据、无痕模式、磁盘损坏仍可能丢失密文。现在可以用加密文件和原密码**手动**在同一账号/书房/笔记位置的不同设备间转移待发送草稿；仍没有云端自动同步，也不会在联网后自动上传私人草稿。
 
 旧版 localStorage 队列仍依赖 Web Locks 保护并发；新 IndexedDB 队列无需 Web Locks。
 
 ## 验收结论范围
 
-完成：加密记录原子写入、逐条读回删除、额度限制、旧数据保留、UI 入口、模拟事务/加密测试。
-未完成（后续模块）：真实手机和浏览器端到端验证、浏览器崩溃恢复演练、全账号数据清除/迁移政策、跨设备同步。
+完成：加密记录原子写入、逐条读回删除、额度限制、旧数据保留、UI 入口、手动加密文件导出导入、模拟事务/加密单测、真实 Chromium IndexedDB 适配层测试。
+待其他一级模块处理：第 14 模块的 iOS/Android 真机与整页 UI/崩溃恢复，第 12/13 模块的账号数据彻底清除和保留政策，以及第 08 模块的跨设备在线状态与进度同步；加密草稿的云端自动同步不属于当前的手动离线队列安全模型。
