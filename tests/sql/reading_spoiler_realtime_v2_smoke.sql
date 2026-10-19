@@ -83,6 +83,25 @@ BEGIN
     RAISE EXCEPTION 'starting page unlocked future';
   END IF;
 END $blocked$;
+-- Known note UUID must not permit creating a reply before this reader's
+-- explicit reveal, even via SECURITY DEFINER submission RPC.
+DO $blocked_reply$
+DECLARE reply_result text;
+BEGIN
+  BEGIN
+    reply_result:=public.v2_submit_reply(
+      current_setting('test.lifecycle_room')::uuid,
+      current_setting('test.spoiler_note')::uuid, 'premature comment',
+      '90000000-0000-4000-8000-000000000011');
+    IF reply_result IN ('saved','already_saved') THEN
+      RAISE EXCEPTION 'future shared note accepted premature reply';
+    END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  IF EXISTS(SELECT 1 FROM public.reading_note_replies_v2) THEN
+    RAISE EXCEPTION 'unauthorized future reply was persisted';
+  END IF;
+END $blocked_reply$;
 -- Explicitly opening chunk 3 reveals only shared material through that index.
 DO $unlocked$
 DECLARE room uuid:=current_setting('test.lifecycle_room')::uuid;
@@ -138,6 +157,23 @@ BEGIN
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
 END $no_direct_writes$;
+RESET ROLE;
+
+-- Outsider (not just former members) cannot inspect or acknowledge content.
+SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000014',false);
+SET ROLE authenticated;
+DO $stranger$
+DECLARE room uuid:=current_setting('test.lifecycle_room')::uuid;
+BEGIN
+  IF public.v2_acknowledge_read_chunk(room,3) OR
+     public.v2_can_see_shared_chunk(room,3) OR
+     EXISTS(SELECT 1 FROM public.reading_shared_signal_v2)
+     OR EXISTS(SELECT 1 FROM public.reading_highlights_v2)
+     OR EXISTS(SELECT 1 FROM public.reading_ink_v2)
+     OR EXISTS(SELECT 1 FROM public.reading_note_replies_v2) THEN
+    RAISE EXCEPTION 'outsider saw protected shared content or event';
+  END IF;
+END $stranger$;
 RESET ROLE;
 
 -- Member exit revokes all future shared, private, signal, and frontier access.
