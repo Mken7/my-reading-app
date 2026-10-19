@@ -164,9 +164,11 @@ BEGIN
     RAISE EXCEPTION 'anonymous unlock executed';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
-  IF EXISTS(SELECT 1 FROM public.reading_shared_signal_v2) THEN
-    RAISE EXCEPTION 'anonymous activity leaked';
-  END IF;
+  BEGIN
+    PERFORM * FROM public.reading_shared_signal_v2;
+    RAISE EXCEPTION 'anonymous signal SELECT executed';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
 END $anonymous$;
 RESET ROLE;
 \echo 'PASS: spoiler RLS, private notes, drawing, guarded replies, opaque signals, member revocation'
