@@ -99,9 +99,9 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
        attemptedCompanionRef.current===pageStart || pageStart>=1999)return;
     attemptedCompanionRef.current=pageStart;
     let active=true;
-    void client.rpc("v2_read_book_chunks",{
+    void Promise.resolve(client.rpc("v2_read_book_chunks",{
       target_room:roomId,from_index:pageStart+1,requested_count:1,
-    }).then(async ({data,error})=>{
+    })).then(async ({data,error})=>{
       if(!active || error)return;
       const right=checkedReaderPages(data,pageStart+1,false)[0];
       if(!right)return;
