@@ -86,12 +86,17 @@ END $blocked$;
 -- Explicitly opening chunk 3 reveals only shared material through that index.
 DO $unlocked$
 DECLARE room uuid:=current_setting('test.lifecycle_room')::uuid;
+  ack boolean;
+  highlight_count integer;
+  ink_count integer;
+  allowed boolean;
 BEGIN
-  IF public.v2_acknowledge_read_chunk(room,3) IS DISTINCT FROM true OR
-     (SELECT count(*) FROM public.reading_highlights_v2
-       WHERE room_id=room)<>1 OR
-     (SELECT count(*) FROM public.reading_ink_v2
-       WHERE room_id=room)<>1 THEN
+  ack:=public.v2_acknowledge_read_chunk(room,3);
+  SELECT count(*) INTO highlight_count FROM public.reading_highlights_v2 WHERE room_id=room;
+  SELECT count(*) INTO ink_count FROM public.reading_ink_v2 WHERE room_id=room;
+  allowed:=public.v2_can_see_shared_chunk(room,3);
+  RAISE NOTICE 'spoiler-check ack=%, frontier=%, highlights=%, ink=%',ack,allowed,highlight_count,ink_count;
+  IF ack IS DISTINCT FROM true OR highlight_count<>1 OR ink_count<>1 THEN
     RAISE EXCEPTION 'explicitly revealed shared context not visible';
   END IF;
   IF EXISTS(SELECT 1 FROM public.reading_highlights_v2
