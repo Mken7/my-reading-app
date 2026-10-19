@@ -15,6 +15,7 @@ type HighlightRow = V2HighlightRange & {
   body: string;
   visibility: "private" | "shared";
   created_at: string;
+  revision: number;
 };
 type Selection = { start: number; end: number; quote: string };
 type Props = {
@@ -40,7 +41,8 @@ function validHighlight(value: unknown): value is HighlightRow {
     Number.isInteger(row.start_index) && Number.isInteger(row.end_index) &&
     typeof row.body === "string" &&
     (row.visibility === "private" || row.visibility === "shared") &&
-    typeof row.created_at === "string";
+    typeof row.created_at === "string" &&
+    Number.isInteger(row.revision) && (row.revision as number)>=1;
 }
 
 /** All note positions are relative to one immutable, codepoint-indexed chunk. */
@@ -56,13 +58,18 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
   const [visibility, setVisibility] = useState<"private" | "shared">("private");
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("");
+  const [editingNote,setEditingNote] = useState<string | null>(null);
+  const [editBody,setEditBody] = useState("");
+  const [editVisibility,setEditVisibility] = useState<"private" | "shared">("private");
+  const [editRevision,setEditRevision] = useState(0);
+  const [hideTarget,setHideTarget] = useState<string | null>(null);
   const draftScope = { userId, roomId, kind: "highlight" as const, targetId: String(chunkIndex) };
   const [draftBackupRevision,setDraftBackupRevision] = useState(0);
 
   const refresh = useCallback(async () => {
     const { data, error } = await client
       .from("reading_highlights_v2")
-      .select("id,author_id,start_index,end_index,body,visibility,created_at")
+      .select("id,author_id,start_index,end_index,body,visibility,revision,created_at")
       .eq("room_id", roomId)
       .eq("chunk_index", chunkIndex)
       .order("created_at", { ascending: true })
@@ -139,6 +146,57 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
     setMessage("已选择指定 Unicode 字符范围。现在可用手绘工具快速圈注或写文字批注。");
   }
 
+  function beginEdit(note:HighlightRow) {
+    if(working || note.author_id!==userId)return;
+    setEditingNote(note.id);
+    setEditBody(note.body);
+    setEditVisibility(note.visibility);
+    setEditRevision(note.revision);
+    setHideTarget(null);
+    setMessage("编辑时保留原文字区间。私人/共享范围可能改变，请确认后保存。");
+  }
+
+  async function saveNoteEdit() {
+    if(working || !editingNote || !editBody.trim() || editBody.trim().length>2000)return;
+    setWorking(true);
+    const {data,error}=await client.rpc("v2_edit_highlight",{
+      target_room:roomId,target_note:editingNote,target_body:editBody.trim(),
+      target_visibility:editVisibility,expected_revision:editRevision,
+    });
+    if(error){
+      setMessage("网络异常，无法确定修改结果。请先刷新并核对旧文字，再重试。");
+    }else if(data==="saved" || data==="unchanged"){
+      setMessage(data==="saved"?"批注已更新，服务器保留了修改记录。":"批注内容没有变化。");
+      setEditingNote(null);
+      await refresh();
+    }else if(data==="conflict"){
+      setMessage("另一设备刚修改了这条批注。编辑框内容已保留，请先复制或核对，再刷新批注；不会静默覆盖。");
+    }else if(data==="replies_locked"){
+      setMessage("这条批注已有回复，不能更改私人/共享范围，以保护回复者的隐私。正文仍可调整。");
+    }else{
+      setMessage("服务器拒绝修改：该批注可能已撤销，或你没有编辑权限。");
+      if(data==="withdrawn")await refresh();
+    }
+    setWorking(false);
+  }
+
+  async function hideMyNote(note:HighlightRow){
+    if(working || hideTarget!==note.id || note.author_id!==userId)return;
+    setWorking(true);
+    const {data,error}=await client.rpc("v2_hide_highlight",{
+      target_room:roomId,target_note:note.id,
+    });
+    setHideTarget(null);
+    if(error || data!==true){
+      setMessage("撤销未完成：只能撤销本人在活动书房内的批注。");
+    }else{
+      setMessage("该批注及其全部回复已从双方阅读界面隐藏，撤销事件已审计；数据尚未彻底删除。");
+      if(editingNote===note.id)setEditingNote(null);
+      await refresh();
+    }
+    setWorking(false);
+  }
+
   async function submit() {
     if (!selected || working || !draft.trim()) return;
     setWorking(true);
@@ -178,6 +236,8 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
       }
       window.getSelection()?.removeAllRanges();
       await refresh();
+    } else if (data === "withdrawn") {
+      setMessage("原发送编号的批注已撤销，重试不会恢复旧笔记；请另建新批注。");
     } else if (data === "conflict") {
       setMessage("发送编号已关联另一版本，未修改服务器记录。请检查当前文字和可见范围，再另建一条发送任务。");
     } else {
@@ -350,15 +410,66 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
       {message && <p role="status" className="mt-2 text-xs text-[#76563a]">{message}</p>}
       {showAnnotations && annotations.length > 0 && (
         <div className="mt-3 space-y-2">
-          <h5 className="text-sm font-medium">这段文字的批注</h5>
+          <h5 className="text-sm font-medium">这段文字的批注（{annotations.length}）</h5>
           {annotations.map((note) => (
             <article key={note.id} className="rounded-lg border border-[#e2d9cb] bg-white/80 p-3">
               <p className="mb-1 text-xs text-[#817668]">
                 {note.author_id === userId ? "我" : "共读伙伴"} ·
                 {note.visibility === "private" ? " 私人笔记" : " 双方共享"} ·
-                第 {note.start_index + 1} 至 {note.end_index} 字
+                第 {note.start_index + 1} 至 {note.end_index} 字 · 版本 {note.revision}
               </p>
               <p className="whitespace-pre-wrap break-words text-sm leading-6">{note.body}</p>
+              {note.author_id===userId && (
+                <div className="mt-2 space-y-2">
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" disabled={working}
+                      className={buttonClass} onClick={()=>beginEdit(note)}>
+                      修改我的批注
+                    </button>
+                    {hideTarget===note.id ? (
+                      <>
+                        <button type="button" disabled={working} className={buttonClass}
+                          onClick={()=>{void hideMyNote(note);}}>确认撤销批注及讨论</button>
+                        <button type="button" disabled={working} className={buttonClass}
+                          onClick={()=>setHideTarget(null)}>取消</button>
+                      </>
+                    ) : (
+                      <button type="button" disabled={working} className={buttonClass}
+                        onClick={()=>{setHideTarget(note.id);setEditingNote(null);}}>
+                        撤销我的批注
+                      </button>
+                    )}
+                  </div>
+                  {editingNote===note.id && (
+                    <div className="space-y-2 rounded-lg border border-[#d6c8b4] bg-[#f5efe4] p-3">
+                      <label className="block text-xs">
+                        修改文字（原划线位置不变）
+                        <textarea className="mt-1 min-h-20 w-full rounded-lg border bg-white p-2"
+                          value={editBody} maxLength={2000}
+                          onChange={(e)=>setEditBody(e.target.value)}/>
+                      </label>
+                      <label className="block text-xs">可见范围
+                        <select className="ml-2 rounded-lg border bg-white p-2"
+                          value={editVisibility}
+                          onChange={(e)=>setEditVisibility(e.target.value as "private" | "shared")}>
+                          <option value="private">仅自己</option>
+                          <option value="shared">双方共享</option>
+                        </select>
+                      </label>
+                      <p className="text-xs text-[#817668]">
+                        有回复的批注不能更改共享范围。其他设备修改后会要求确认，不会自动覆盖。
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" className={buttonClass}
+                          disabled={working || !editBody.trim()}
+                          onClick={()=>{void saveNoteEdit();}}>保存修改</button>
+                        <button type="button" className={buttonClass}
+                          disabled={working} onClick={()=>setEditingNote(null)}>取消修改</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               <V2NoteReplies client={client} roomId={roomId} noteId={note.id}
                 userId={userId} visibility={note.visibility} />
             </article>
