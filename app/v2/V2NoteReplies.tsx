@@ -34,6 +34,7 @@ export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Pr
   const [expanded, setExpanded] = useState(false);
   const [replies, setReplies] = useState<Reply[]>([]);
   const [draft, setDraft] = useState("");
+  const [operationId, setOperationId] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [pendingHide, setPendingHide] = useState<string | null>(null);
@@ -62,17 +63,22 @@ export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Pr
     event.preventDefault();
     if (busy || !draft.trim() || draft.trim().length > 2000) return;
     setBusy(true);
-    const { error } = await client.from("reading_note_replies_v2").insert({
-      room_id: roomId,
-      highlight_id: noteId,
-      author_id: userId,
-      body: draft.trim(),
+    const submissionId = operationId || crypto.randomUUID();
+    if (!operationId) setOperationId(submissionId);
+    const { data, error } = await client.rpc("v2_submit_reply", {
+      target_room: roomId,
+      target_note: noteId,
+      target_body: draft.trim(),
+      target_operation: submissionId,
     });
     if (error) {
-      setNotice("保存回复失败：可能没有权限、书房已关闭或讨论已达到 100 条上限。");
-    } else {
+      setNotice("网络或服务器异常，无法确定回复是否保存。请不要修改正文，保留此发送编号重试；可先加密备份。");
+    } else if (data === "saved" || data === "already_saved") {
       setDraft("");
-      setNotice("回复已保存。");
+      setOperationId("");
+      setNotice(data === "already_saved"
+        ? "服务器确认这条回复已经发送过，没有产生重复记录。"
+        : "回复已保存。");
       try {
         await removeEncryptedDraft(window.localStorage,draftScope);
         setDraftBackupRevision((revision)=>revision+1);
@@ -80,6 +86,12 @@ export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Pr
         setNotice("回复已保存，但本机加密备份未清除，请手动删除。");
       }
       await load();
+    } else if (data === "withdrawn") {
+      setNotice("这条回复已撤销，重复发送不会将其恢复。");
+    } else if (data === "conflict") {
+      setNotice("该发送编号已经对应其他内容，服务器没有修改旧回复。");
+    } else {
+      setNotice("服务器拒绝回复，请检查书房权限、批注是否可见和容量限制。");
     }
     setBusy(false);
   }
@@ -152,7 +164,10 @@ export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Pr
               {visibility === "shared" ? "回复这处共读批注" : "追加一条私人想法"}
               <textarea className="mt-1 min-h-20 w-full rounded-lg border border-[#d4c9b8] bg-white p-2 text-sm"
                 maxLength={2000} value={draft}
-                onChange={(event) => setDraft(event.target.value)} />
+                onChange={(event) => {
+                  setDraft(event.target.value);
+                  setOperationId(crypto.randomUUID());
+                }} />
             </label>
             <button type="submit" disabled={busy || !draft.trim()}
               className="rounded-lg border border-[#cfc4b3] px-3 py-2 text-xs disabled:opacity-50">
@@ -162,12 +177,32 @@ export function V2NoteReplies({ client, roomId, noteId, userId, visibility }: Pr
           <V2EncryptedDraft
             scope={draftScope}
             refreshToken={draftBackupRevision}
-            draftValue={draft.trim().length>0 ? draft : ""}
+            draftValue={draft.trim().length>0
+              ? JSON.stringify({v:2,body:draft,operationId}) : ""}
             disabled={busy}
             onRestore={(plaintext) => {
-              if (!plaintext.trim() || plaintext.length>2000 ||
-                  (draft.trim() && draft!==plaintext)) return false;
-              setDraft(plaintext);
+              let restoredBody = plaintext;
+              let restoredOperation = crypto.randomUUID();
+              try {
+                const parsed = JSON.parse(plaintext) as {
+                  v?:unknown; body?:unknown; operationId?:unknown;
+                };
+                if (parsed && parsed.v===2) {
+                  if (typeof parsed.body!=="string" ||
+                      typeof parsed.operationId!=="string" ||
+                      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(parsed.operationId)) {
+                    return false;
+                  }
+                  restoredBody = parsed.body;
+                  restoredOperation = parsed.operationId;
+                }
+              } catch {
+                // Older encrypted drafts contained just plain reply text.
+              }
+              if (!restoredBody.trim() || restoredBody.length>2000 ||
+                  (draft.trim() && draft!==restoredBody)) return false;
+              setDraft(restoredBody);
+              setOperationId(restoredOperation);
               return true;
             }}
           />
