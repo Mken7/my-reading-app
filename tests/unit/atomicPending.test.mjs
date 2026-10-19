@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  addAtomicPending,listAtomicPending,recoverAtomicPending,removeAtomicPending,
+  addAtomicPending,listAtomicPending,inspectAtomicPending,recoverAtomicPending,removeAtomicPending,
 } from "../../lib/v2/atomicPending.ts";
 
 const scope={userId:"reader-A",roomId:"room-A",kind:"highlight",targetId:"42"};
@@ -98,4 +98,31 @@ test("bound per target, reject corrupted rows and preserve intact records",async
   first.envelope="{";
   await assert.rejects(recoverAtomicPending(store,scope,uuid(1),password),/损坏/);
   assert.equal(await recoverAtomicPending(store,scope,uuid(2),password),draft(2));
+});
+
+
+test("a broken ciphertext is quarantined in the list without hiding intact drafts",async()=>{
+  const store=atomicStore();
+  await addAtomicPending(store,scope,draft(1),password);
+  await addAtomicPending(store,scope,draft(2),password);
+  const damaged=[...store.rows.values()].find(row=>row.operation===uuid(1));
+  assert.ok(damaged);
+  damaged.envelope="{";
+  const report=await inspectAtomicPending(store,scope);
+  assert.deepEqual(report.ids,[uuid(1),uuid(2)]);
+  assert.deepEqual(report.damagedIds,[uuid(1)]);
+  assert.equal(await recoverAtomicPending(store,scope,uuid(2),password),draft(2));
+  await removeAtomicPending(store,scope,uuid(1));
+  assert.deepEqual(await inspectAtomicPending(store,scope),{
+    ids:[uuid(2)],damagedIds:[],
+  });
+});
+
+test("corrupted scope identity fails closed without deleting a different entry",async()=>{
+  const store=atomicStore();
+  await addAtomicPending(store,scope,draft(4),password);
+  const row=[...store.rows.values()][0];
+  row.operation=uuid(9);
+  await assert.rejects(inspectAtomicPending(store,scope),/身份信息/);
+  assert.equal(store.rows.size,1);
 });
