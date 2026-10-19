@@ -40,6 +40,9 @@ test("invalid and empty TXT inputs are rejected", () => {
   assert.throws(() => prepareTxt("hi", 3001), /不合法/);
   assert.throws(() => prepareTxt("hi", 0), /不合法/);
   assert.throws(() => prepareTxt("a".repeat(1000001)), /太大/);
+  assert.throws(() => prepareTxt("valid\u0000invalid"), /二进制|控制字符/);
+  assert.throws(() => prepareTxt("valid\u0007bell"), /二进制|控制字符/);
+  assert.equal(prepareTxt("中文\t换行\n测试").chunks.join(""),"中文\t换行\n测试");
 });
 
 test("decode validates UTF-8 and strips a BOM", () => {
