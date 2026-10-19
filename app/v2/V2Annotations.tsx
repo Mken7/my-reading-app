@@ -7,6 +7,7 @@ import { V2InkOverlay } from "./V2InkOverlay";
 import { V2NoteReplies } from "./V2NoteReplies";
 import { V2EncryptedDraft } from "./V2EncryptedDraft";
 import { removeEncryptedDraft } from "@/lib/v2/encryptedDraft";
+import { removeEncryptedPending } from "@/lib/v2/draftQueue";
 
 type HighlightRow = V2HighlightRange & {
   body: string;
@@ -128,6 +129,7 @@ export function V2Annotations({ client, roomId, chunkIndex, body, userId, fontSi
       setDraft("");
       setOperationId("");
       try {
+        await removeEncryptedPending(window.localStorage,draftScope,submissionId);
         await removeEncryptedDraft(window.localStorage,draftScope);
         setDraftBackupRevision((revision)=>revision+1);
       } catch {
