@@ -38,8 +38,9 @@ Migration order (isolated v2 names only):
 12. `supabase/migrations/20261019005000_v2_idempotent_submissions.sql` adds room/author/client-operation uniqueness and authenticated submission RPCs. Identical retries do not duplicate notes/replies or audit events; changed payloads, visibility changes, hidden reply replays and unauthorized members cannot silently change prior data. See `docs/V2_RETRY_SAFE_SUBMISSIONS.md`.
 13. `supabase/migrations/20261019006000_v2_saved_bookmarks_sync.sql` adds at most 20 private personal named pins per room/reader and fixes nonzero initial revision creating a cursor.
 14. `supabase/migrations/20261019007000_v2_character_reading_position.sql` adds Unicode-codepoint offsets to the private reading cursor, preserves the legacy three-argument API, and exposes read/update RPCs with strict CAS and private membership checks. See `docs/MODULE_08_ACCEPTANCE.md`.
+15. `supabase/migrations/20261019008000_v2_ink_reflow_policy.sql` records single-line reflow-safe geometry, revokes ink visibility for former/closed-room members, and includes the layout mode in chained ink audit payloads. See `docs/MODULE_07_ACCEPTANCE.md`.
 
-CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_character_position_v2_smoke.sql` (which includes the prior access/audit smoke tests) in an **ephemeral PostgreSQL 16 service**, independent of the real Supabase database. Tests assert owner access, partner privacy, anonymous and third-user denial, two-member capacity, field immutability, private audit access, hash-chain consistency, invite rotation, owner approval, replay denial, actor-level throttling, issuance quotas, protected chunk reads, immutable owner uploads and per-user read/write limits. The frontend continues to require strict lint + TypeScript/static export.
+CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_ink_reflow_v2_smoke.sql` (which includes the prior access/audit smoke tests) in an **ephemeral PostgreSQL 16 service**, independent of the real Supabase database. Tests assert owner access, partner privacy, anonymous and third-user denial, two-member capacity, field immutability, private audit access, hash-chain consistency, invite rotation, owner approval, replay denial, actor-level throttling, issuance quotas, protected chunk reads, immutable owner uploads and per-user read/write limits. The frontend continues to require strict lint + TypeScript/static export.
 
 ## Important limits
 
@@ -64,7 +65,8 @@ CI: `.github/workflows/validate-pr.yml` executes `tests/sql/reading_character_po
 - [x] Add chapter indexes, per-account reading progress with stale-device conflict detection, and independently overlapping private/shared text notes, with isolated database and Unicode tests.
 - [x] Add bounded hand-drawn circles/arrows/strokes and private/shared threaded replies with isolated SQL and geometry tests.
 - [x] Introduce optional text-relative anchored ink with legacy-stroke compatibility, Unicode/emoji range tests and paragraph reflow recalculation.
-- [ ] Validate actual reflow positioning on iOS/Android and multi-line selections; the current bounding-box implementation can distort curved ink after line wrapping.
+- [x] Prevent distortion of new ink after selected words wrap across multiple lines, while preserving old anchor layout. Real Chromium DOM Range tests cover line wrapping and reset. Keyboard selection + circle/arrow presets are implemented.
+- [ ] Validate touch/selection/scroll and screen readers on actual iOS/Android. The single-line design intentionally does not reconstruct arbitrary multi-line freehand curves.
 - [x] Add owner-only soft hide of saved ink/replies, enforced by RLS and trusted RPCs with hash-chain events and multi-user regression checks.
 - [ ] Implement actual legal erasure/retention/export workflows; soft hiding leaves the original payload in the server database.
 - [x] Add encrypted per-target pending drafts with retained client operation IDs and server-checked idempotent manual retries (not an automatic offline queue).
