@@ -6,7 +6,7 @@ import { V2TxtImporter } from "./V2TxtImporter";
 import { V2Annotations } from "./V2Annotations";
 import { V2GlassDock } from "./V2GlassDock";
 import { reconcileCursor,validReadingCursor,expectedCursorRevision,
-  type ReadingCursor,type CursorConflict } from "@/lib/v2/readingProgressSync";
+  type ReadingCursor,type ReadingLocation,type CursorConflict } from "@/lib/v2/readingProgressSync";
 
 type ProtectedChunk = { chunk_index: number; body: string };
 type Chapter = { chapter_position: number; title: string; start_chunk: number };
@@ -58,7 +58,8 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
   // cannot accidentally use a newly refreshed revision for an older write.
   const progressRef=useRef<Progress | null>(null);
   const conflictRef=useRef<Conflict | null>(null);
-  const viewedRef=useRef<number | null>(null);
+  const viewedRef=useRef<ReadingLocation | null>(null);
+  const [readingAnchor,setReadingAnchor]=useState<number | null>(null);
   const refreshInFlightRef=useRef(false);
   const channelRef=useRef<BroadcastChannel | null>(null);
   const [metaLoading, setMetaLoading] = useState(false);
@@ -116,7 +117,7 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
     if(refreshInFlightRef.current) return;
     refreshInFlightRef.current=true;
     try {
-      const {data,error}=await client.rpc("v2_get_reading_progress",{
+      const {data,error}=await client.rpc("v2_get_reading_position",{
         target_room:roomId,
       });
       if(error){
@@ -200,10 +201,11 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
     };
   },[roomId,userId,refreshCursor,refreshPins]);
 
-  async function saveBookmark(index:number,expectedRevision:number){
+  async function saveBookmark(index:number,offset:number,expectedRevision:number){
     try {
-      const {data,error}=await client.rpc("v2_save_reading_progress",{
-        target_room:roomId,target_chunk:index,expected_revision:expectedRevision,
+      const {data,error}=await client.rpc("v2_save_reading_position",{
+        target_room:roomId,target_chunk:index,target_offset:offset,
+        expected_revision:expectedRevision,
       });
       const row=Array.isArray(data)?data[0]:null;
       if(error || !row || typeof row.saved!=="boolean" ||
@@ -220,7 +222,7 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
         setMessage("已保存我的阅读进度。");
       } else if(validReadingCursor(row)){
         recordProgress(row);
-        recordConflict({desired:index,remote:row});
+        recordConflict({desired:{chunk_index:index,char_offset:offset},remote:row});
         setMessage("其他设备保存了更新的书签，当前段落未覆盖新版本。");
       } else {
         setMessage("书签服务器拒绝了旧版本；请先同步并选择书签位置。");
@@ -229,6 +231,18 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
     }catch{
       setMessage("书签写入网络异常。服务器是否已保存尚不确定，请刷新确认。");
     }
+  }
+
+  async function saveExactPosition(offset:number){
+    const current=chunks[0];
+    if(!current || working || !Number.isInteger(offset) || offset<0 ||
+       offset>Array.from(current.body).length)return;
+    const revisionBeforeSave=expectedCursorRevision(progressRef.current);
+    setWorking(true);
+    viewedRef.current={chunk_index:current.chunk_index,char_offset:offset};
+    await saveBookmark(current.chunk_index,offset,revisionBeforeSave);
+    setReadingAnchor(offset);
+    setWorking(false);
   }
 
   async function addPin(){
@@ -289,7 +303,7 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
     setWorking(false);
   }
 
-  async function read(index: number, fromRemoteBookmark = false) {
+  async function read(index: number, fromRemoteBookmark = false, restoreOffset = 0) {
     if (working || !Number.isInteger(index) || index < 0 || index > 1999) return;
     const revisionAtNavigationStart=expectedCursorRevision(progressRef.current);
     setWorking(true);
@@ -315,12 +329,15 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
       setChunks(verified);
       setReadIndex(index);
       if (verified.length) {
-        viewedRef.current=index;
+        const point=fromRemoteBookmark && restoreOffset>=0 &&
+          restoreOffset<=Array.from(verified[0].body).length ? restoreOffset : 0;
+        viewedRef.current={chunk_index:index,char_offset:point};
+        setReadingAnchor(fromRemoteBookmark ? point : null);
         if(fromRemoteBookmark) {
           recordConflict(null);
           setMessage("已恢复服务器上的阅读位置，不会重复覆盖书签。");
         } else {
-          await saveBookmark(index,revisionAtNavigationStart);
+          await saveBookmark(index,0,revisionAtNavigationStart);
         }
       } else setMessage("服务器返回的数据格式不正确。");
     }
@@ -366,7 +383,8 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
         </div>
         <p className="mt-2 text-xs text-[#817668]">
           {progress ? "我的云端进度：第 " + (progress.chunk_index + 1) +
-            " 段（版本 " + progress.revision + "）" : "暂无云端进度。阅读后尝试同步。"}
+            " 段 · 第 " + progress.char_offset + " 个 Unicode 字符之后（版本 " +
+            progress.revision + "）" : "暂无云端进度。阅读后尝试同步。"}
         </p>
         <p className="mt-1 text-xs text-[#817668]">
           每 45 秒、窗口重新获得焦点时和同账号其他标签页操作后检查新版本。
@@ -375,7 +393,7 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
         </p>
         {progress && (
           <button type="button" className={buttonClass + " mt-2"} disabled={working}
-            onClick={() => { void read(progress.chunk_index,true); }}>
+            onClick={() => { void read(progress.chunk_index,true,progress.char_offset); }}>
             从我的书签继续
           </button>
         )}
@@ -383,17 +401,20 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
           <div className="mt-3 rounded-lg border border-amber-300 p-3">
             <p className="text-xs leading-5">
               另一设备记录第 {conflict.remote.chunk_index + 1} 段，
-              当前阅读的是第 {conflict.desired + 1} 段。
+              第 {conflict.remote.char_offset} 字之后。
+              你的本地位置是第 {conflict.desired.chunk_index + 1} 段，
+              第 {conflict.desired.char_offset} 字之后。
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
               <button type="button" className={buttonClass} disabled={working}
-                onClick={() => { void read(conflict.remote.chunk_index,true); }}>
+                onClick={() => { void read(conflict.remote.chunk_index,true,conflict.remote.char_offset); }}>
                 使用另一设备位置
               </button>
               <button type="button" className={buttonClass} disabled={working}
                 onClick={() => {
                   setWorking(true);
-                  void saveBookmark(conflict.desired, conflict.remote.revision)
+                  void saveBookmark(conflict.desired.chunk_index,
+                    conflict.desired.char_offset,conflict.remote.revision)
                     .finally(() => setWorking(false));
                 }}>
                 明确以当前段落覆盖书签
@@ -549,7 +570,9 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
             client={client} roomId={roomId} userId={userId}
             chunkIndex={chunk.chunk_index} body={chunk.body}
             fontSize={fontSize} lineHeight={lineHeight}
-            showAnnotations={annotationsShown} />
+            showAnnotations={annotationsShown}
+            readingAnchor={readingAnchor}
+            onSetReadingPosition={(offset)=>{void saveExactPosition(offset);}} />
         </article>
       ))}
       <V2GlassDock
