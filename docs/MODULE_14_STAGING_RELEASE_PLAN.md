@@ -6,7 +6,8 @@
 ## 已有自动化证据
 
 - `validate-pr.yml` 在 PR 上自动运行 Node 单元测试、严格 ESLint、Next.js 静态构建、独立 PostgreSQL 16 的完整 RLS/SQL 回归、Chrome IndexedDB/EPUB/PDF/响应式阅读器测试。
-- `tests/browser/run-v2-static.cjs` 实际用 Chromium 打开 **从 Next.js 静态构建出来的** `/my-reading-app/v2/`，检查 520/768/1280 px 浏览器视口没有横向溢出；未配置环境时，预览仍关闭、不渲染登录表单、不向 Supabase Auth/REST 发请求。这不是 iOS/Android 真机测试，也不验证已登录大厅的所有布局。
+- `tests/browser/run-v2-static.cjs` 实际打开 Next.js 静态导出的 `/my-reading-app/v2/`，检查默认关闭、不显示登录表单、不向 Supabase 发送请求及无横向溢出；判定改为读取**已执行的浏览器 DOM 结果节点**，不能再以源代码里出现 PASS 字样误报。普通 Chromium `--window-size=390` 有最小约 500px 的限制，输出需以**实际 `innerWidth`** 为准。
+- `tests/browser/run-v2-auth-cdp.mjs` 则用无真实密钥的虚构 staging 配置，创建**不发布的**第二套静态构建，通过 Chromium DevTools Protocol（CDP）精确设置 390/430px 触控视口和 768/1280px 桌面视口，实际等待 React hydration 的邮箱与密码登录表单，并检查标签、横向溢出和触控模拟。**这是真实 Chromium 渲染，但不是 Safari/Android 真机，也没有实际登录数据库。**
 - `tests/staging/run-supabase-e2e.mjs`：**只交付脚本，未有通过的真实环境证据**。该脚本在手动提供的独立测试库、三组已验证邮箱账号上执行：Auth 登录、匿名/非成员读权、六位邀请码及房主审批、版权声明、受保护段落上传、原文和未来共享笔记隔离、实际 Realtime 事件、成员退出撤权、双方同意后销毁新建的临时书房。
 - 隔离 staging 脚本**不会在常规 PR CI 中运行**；未来 `staging-three-accounts` GitHub 手动 job 还需要在默认分支建立工作流后才能实际触发。缺少测试项目标识、账户或明确测试环境确认时测试脚本失败关闭。脚本会创建并删除一次性测试书房，可能消耗限额；失败时仅输出临时房间 ID 和检查阶段，不打印密钥。
 
@@ -33,6 +34,7 @@
 
 ## 发布前硬性检查
 
+- [ ] 对 `npm ci` 的安全告警逐项复核，运行 `npm audit --omit=dev` 与开发依赖完整审计；修复或记录已知漏洞的适用性、版本及临时缓解措施。日志曾显示 14 项依赖告警（含高危和严重级），**不能仅凭静态构建或绿色 lint 宣称依赖安全**。
 - [ ] 独立测试 Supabase 全迁移通过；三组真实账号、Auth 邮件、浏览器双人 E2E 通过；权限撤销与 Realtime 订阅失效实测
 - [ ] iPhone Safari、Android Chrome 与至少一种桌面浏览器真实测试通过，关键无障碍路径通过
 - [ ] 在独立测试项目完成重复迁移、备份与恢复、回滚演练；上线迁移程序经过人工审查，**不允许先修改生产数据库试错**
