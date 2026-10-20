@@ -231,6 +231,7 @@ export function DemoLibrary() {
   const [pageOffset,setPageOffset] = useState(0);
   const [pageCount,setPageCount] = useState(1);
   const [columnWidth,setColumnWidth] = useState(0);
+  const [viewportWidth,setViewportWidth] = useState(0);
   const flowViewportRef=useRef<HTMLDivElement|null>(null);
   const flowRef=useRef<HTMLDivElement|null>(null);
   const jumpToChapterEnd=useRef(false);
@@ -352,8 +353,78 @@ export function DemoLibrary() {
     (item.title+item.subtitle+item.author).toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())
   );
   const percent=Math.round((safeChapterIndex+(pageOffset+1)/Math.max(1,pageCount))/book.chapters.length*100);
-  const visiblePages=doublePage&&typeof window!=="undefined"&&window.innerWidth>650?2:1;
+  const visiblePages=doublePage&&viewportWidth>650?2:1;
   const pageKey=book.id+":"+safeChapterIndex;
+
+  // CSS columns use the browser's own line wrapping. A physical page has a
+  // fixed text viewport, so long PDF/EPUB/TXT chunks continue on later pages
+  // rather than extending the document vertically or losing trailing lines.
+  useLayoutEffect(()=>{
+    if(screen!=="reader"||!flowViewportRef.current)return;
+    const viewport=flowViewportRef.current;
+    const measure=()=>{
+      setColumnWidth(Math.max(1,Math.round(viewport.getBoundingClientRect().width)));
+      setViewportWidth(window.innerWidth);
+    };
+    measure();
+    const observer=new ResizeObserver(measure);
+    observer.observe(viewport);
+    window.addEventListener("resize",measure);
+    return()=>{observer.disconnect();window.removeEventListener("resize",measure);};
+  },[screen,book.id,safeChapterIndex,notesVisible,doublePage]);
+  useLayoutEffect(()=>{
+    if(screen!=="reader"||!columnWidth||!flowRef.current)return;
+    const frame=requestAnimationFrame(()=>{
+      const flow=flowRef.current;
+      if(!flow)return;
+      const measuredWidth=Math.max(1,flow.clientWidth);
+      const total=Math.max(1,Math.ceil((flow.scrollWidth-2)/measuredWidth));
+      setPageCount(total);
+      const lastStart=Math.floor((total-1)/visiblePages)*visiblePages;
+      if(jumpToChapterEnd.current){
+        jumpToChapterEnd.current=false;
+        setPageOffset(lastStart);
+      }else{
+        setPageOffset(offset=>Math.min(offset,lastStart));
+      }
+    });
+    return()=>cancelAnimationFrame(frame);
+  },[screen,book.id,safeChapterIndex,columnWidth,fontSize,visiblePages]);
+  useEffect(()=>{
+    if(!localReady||screen!=="reader")return;
+    setPageProgress(old=>old[pageKey]===pageOffset?old:{...old,[pageKey]:pageOffset});
+  },[localReady,screen,pageKey,pageOffset]);
+
+  function turnPage(delta:-1|1){
+    const stride=visiblePages;
+    if(delta===1){
+      if(pageOffset+stride<pageCount){
+        setPageOffset(n=>n+stride);
+      }else if(safeChapterIndex+1<book.chapters.length){
+        goChapter(safeChapterIndex+1);
+      }
+    }else if(pageOffset>0){
+      setPageOffset(n=>Math.max(0,n-stride));
+    }else if(safeChapterIndex>0){
+      jumpToChapterEnd.current=true;
+      goChapter(safeChapterIndex-1);
+    }
+  }
+  useEffect(()=>{
+    if(screen!=="reader")return;
+    const onKey=(event:globalThis.KeyboardEvent)=>{
+      if(event.altKey||event.ctrlKey||event.metaKey)return;
+      if(event.key!=="ArrowLeft"&&event.key!=="ArrowRight")return;
+      const target=event.target;
+      if(target instanceof HTMLElement&&
+        (target.isContentEditable||["INPUT","TEXTAREA","SELECT"].includes(target.tagName)))return;
+      event.preventDefault();
+      turnPage(event.key==="ArrowRight"?1:-1);
+    };
+    window.addEventListener("keydown",onKey);
+    return()=>window.removeEventListener("keydown",onKey);
+  });
+
   const allBookmarks=saved.flatMap(key=>{
     const last=key.lastIndexOf(":");
     const found=books.find(item=>item.id===key.slice(0,last));
