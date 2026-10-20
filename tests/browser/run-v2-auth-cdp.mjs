@@ -115,11 +115,13 @@ async function inspect(send,url,width,height,mobile){
       const missingLabels=inputs.filter(el=>
         !el.closest('label')&&!el.getAttribute('aria-label')&&
         !el.getAttribute('aria-labelledby')).length;
+      const tooSmall=[email,password].filter(el=>
+        el&&el.getBoundingClientRect().height<43.5).length;
       return {
         ready:!!email&&!!password,
         width:innerWidth,
         overflow:document.documentElement.scrollWidth>innerWidth+4,
-        missingLabels,
+        missingLabels,tooSmall,
         touch:'ontouchstart' in window||navigator.maxTouchPoints>0,
         text:document.body?.innerText?.slice(-170)??'',
       };
@@ -131,7 +133,8 @@ async function inspect(send,url,width,height,mobile){
   }
   if(!last?.ready)throw Error("Email/password never hydrated: "+JSON.stringify(last));
   if(last.width!==width)throw Error("Viewport was clamped: "+JSON.stringify(last));
-  if(last.overflow||last.missingLabels>0)throw Error("Mobile overflow/input-label violation: "+JSON.stringify(last));
+  if(last.overflow||last.missingLabels>0||last.tooSmall>0)
+   throw Error("Mobile overflow/input-label/touch target violation: "+JSON.stringify(last));
   if(mobile&&!last.touch)throw Error("Mobile touch emulation failed");
   console.log("PASS: hydrated opt-in fake staging login",JSON.stringify({
    viewport:width+"x"+height,touch:mobile,labels:true,overflow:false,
