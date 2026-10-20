@@ -141,6 +141,70 @@ async function inspect(send,url,width,height,mobile){
   }));
  }finally{await send("Target.closeTarget",{targetId}).catch(()=>{});}
 }
+
+async function inspectOfflineDemo(send,url,width,height,mobile){
+ const {targetId}=await send("Target.createTarget",{url:"about:blank"});
+ try{
+  const {sessionId}=await send("Target.attachToTarget",{targetId,flatten:true});
+  await send("Page.enable",{},sessionId);
+  await send("Runtime.enable",{},sessionId);
+  await send("Emulation.setDeviceMetricsOverride",{
+   width,height,deviceScaleFactor:mobile?3:1,mobile,
+  },sessionId);
+  await send("Emulation.setTouchEmulationEnabled",{
+   enabled:mobile,maxTouchPoints:mobile?5:1,
+  },sessionId);
+  const evalPage=async(expression)=>{
+   const res=await send("Runtime.evaluate",{
+    expression,returnByValue:true,awaitPromise:true,
+   },sessionId);
+   if(res.exceptionDetails)throw Error("Demo browser evaluation failed: "+
+     res.exceptionDetails.text);
+   return res.result?.value;
+  };
+  const waitFor=async(expression,label)=>{
+   for(let i=0;i<75;i++){
+    if(await evalPage(expression))return;
+    await delay(160);
+   }
+   throw Error("Demo did not reach "+label);
+  };
+  await send("Page.navigate",{url},sessionId);
+  await waitFor("document.querySelectorAll('.demo-book-card').length===3","bookshelf");
+  const metrics=await evalPage("({width:innerWidth,overflow:document.documentElement.scrollWidth>innerWidth+4})");
+  if(metrics.width!==width||metrics.overflow)
+   throw Error("Demo layout overflow: "+JSON.stringify(metrics));
+  await evalPage("document.querySelector('.demo-book-card').click();true");
+  await waitFor("!!document.querySelector('.demo-prose')","reader");
+  await evalPage("document.querySelector('.demo-reader-actions .demo-icon-action').click();true");
+  await waitFor("!!document.querySelector('.demo-icon-selected')","bookmark toggle");
+  await evalPage("(()=>{const target=document.querySelector('.demo-prose p');const node=target.firstChild;const range=document.createRange();range.setStart(node,0);range.setEnd(node,Math.min(9,node.textContent.length));const selection=getSelection();selection.removeAllRanges();selection.addRange(range);target.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));return true;})()");
+  await waitFor("!!document.querySelector('.demo-selection-toolbar')","selection UI");
+  await evalPage("document.querySelector('.demo-selection-toolbar button').click();true");
+  await waitFor("!!document.querySelector('.demo-notice')","local highlight");
+  await evalPage("(()=>{const el=document.querySelector('#demo-new-note');const set=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;set.call(el,'本地测试批注，可刷新保存');el.dispatchEvent(new InputEvent('input',{bubbles:true,data:'本地测试批注'}));return true;})()");
+  await waitFor("!document.querySelector('.demo-note-compose button').disabled","note editor");
+  await evalPage("document.querySelector('.demo-note-compose').requestSubmit();true");
+  await waitFor("document.body.innerText.includes('本地测试批注，可刷新保存')","saved note");
+  await evalPage("document.querySelector('.demo-back-button').click();true");
+  await waitFor("!!document.querySelector('.demo-file-input')","import button");
+  await evalPage("(()=>{const input=document.querySelector('.demo-file-input');const dt=new DataTransfer();dt.items.add(new File(['# 本地测试读物\\n\\n这是不用登录就能导入的自写文字。'],'本地测试读物.txt',{type:'text/plain'}));input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));return true;})()");
+  await waitFor("document.querySelector('.demo-reader-back h1')?.textContent==='本地测试读物'","local TXT import");
+  await delay(1000);
+  await send("Page.reload",{ignoreCache:true},sessionId);
+  await waitFor("document.querySelectorAll('.demo-book-card').length===4","reloaded imported shelf");
+  await evalPage("(()=>{const card=[...document.querySelectorAll('.demo-book-card')].find(el=>el.textContent.includes('本地测试读物'));card.click();return true;})()");
+  await waitFor("document.querySelector('.demo-reader-back h1')?.textContent==='本地测试读物'","reloaded imported book");
+  await evalPage("document.querySelector('.demo-back-button').click();true");
+  await evalPage("(()=>{const settings=[...document.querySelectorAll('.demo-menu-item')].find(x=>x.textContent.includes('阅读设置'));settings.click();return true;})()");
+  await waitFor("!!document.querySelector('.demo-settings-panel')","local settings");
+  await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-option-pair button')].find(x=>x.textContent.includes('夜间'));button.click();return true;})()");
+  await waitFor("!!document.querySelector('.demo-night')","night mode");
+  const local=await evalPage("localStorage.getItem('reading-v2-offline-ui-demo-1')?.length??0");
+  if(local<100)throw Error("Local demo state never persisted");
+  console.log("PASS: offline demo import, annotation, bookmark, selection, refresh, night mode",width);
+ }finally{await send("Target.closeTarget",{targetId}).catch(()=>{});}
+}
 await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));
 let browser,protocol;
 try{
@@ -153,6 +217,8 @@ try{
  await inspect(protocol.send,url,430,932,true);
  await inspect(protocol.send,url,768,1024,false);
  await inspect(protocol.send,url,1280,900,false);
+ await inspectOfflineDemo(protocol.send,url+"demo/",390,844,true);
+ await inspectOfflineDemo(protocol.send,url+"demo/",1280,900,false);
 }finally{
  protocol?.close();
  browser?.child.kill();
