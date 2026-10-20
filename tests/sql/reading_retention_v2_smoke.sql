@@ -117,14 +117,25 @@ BEGIN
 END $retained_partner$;
 -- Archive freezes all reading and cannot be mistaken for leaving/deleting.
 DO $archive$
-DECLARE room uuid:=current_setting('test.retained_room')::uuid;
 BEGIN
- IF NOT public.v2_change_room_state(room,'archived') OR
-    public.v2_can_edit_room(room) OR
-    NOT public.v2_change_room_state(room,'active') OR
-    NOT public.v2_can_edit_room(room) THEN
-  RAISE EXCEPTION 'archive restore or freeze failed'; END IF;
+ IF NOT public.v2_change_room_state(current_setting('test.retained_room')::uuid,'archived')
+ THEN RAISE EXCEPTION 'archive failed'; END IF;
 END $archive$;
+DO $frozen$
+BEGIN
+ IF public.v2_can_edit_room(current_setting('test.retained_room')::uuid)
+ THEN RAISE EXCEPTION 'archived room still readable'; END IF;
+END $frozen$;
+DO $restore$
+BEGIN
+ IF NOT public.v2_change_room_state(current_setting('test.retained_room')::uuid,'active')
+ THEN RAISE EXCEPTION 'restore failed'; END IF;
+END $restore$;
+DO $restored$
+BEGIN
+ IF NOT public.v2_can_edit_room(current_setting('test.retained_room')::uuid)
+ THEN RAISE EXCEPTION 'restored room still unavailable'; END IF;
+END $restored$;
 RESET ROLE;
 
 SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000012',false);
