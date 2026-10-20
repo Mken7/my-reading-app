@@ -47,6 +47,9 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
   const companionPresence = useCompanionPresence(client, roomId, userId);
   const activityRevision = useSharedActivity(client, roomId, userId);
   const [draft, setDraft] = useState("");
+  const [rightsBasis,setRightsBasis]=useState<"original"|"public_domain"|"licensed">("original");
+  const [rightsConfirmed,setRightsConfirmed]=useState(false);
+  const [rightsBusy,setRightsBusy]=useState(false);
   const [uploadIndex, setUploadIndex] = useState(0);
   const [readIndex, setReadIndex] = useState(0);
   const [pageStart,setPageStart] = useState(0);
@@ -324,9 +327,24 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
     finally{setConfirmUnpin(null);setPinWorking(false);}
   }
 
+  async function confirmRights(){
+    if(!owner||rightsBusy)return;
+    setRightsBusy(true);
+    try{
+      const {data,error}=await client.rpc("v2_confirm_book_rights",{
+        target_room:roomId,rights_basis:rightsBasis,
+      });
+      setRightsConfirmed(!error&&data===true);
+      setMessage(!error&&data===true
+        ?"仅确认你声明拥有相应使用权；并不代表平台已经审核版权证明。"
+        :"版权声明未被服务器接受，请检查书房权限及测试迁移。");
+    }catch{setRightsConfirmed(false);setMessage("版权声明未确认；不能上传。");}
+    finally{setRightsBusy(false);}
+  }
+
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!owner || working || !draft || draft.length > 3000) return;
+    if (!owner || !rightsConfirmed || working || !draft || draft.length > 3000) return;
     setWorking(true);
     setMessage("");
     const { data, error } = await client.rpc("v2_upload_book_chunk", {
@@ -418,6 +436,20 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
           <summary className="cursor-pointer text-sm font-medium">
             房主上传与导入测试文本（需要时展开）
           </summary>
+        <div className="mt-4 space-y-2 rounded-lg border border-[#e0d9cc] p-3">
+          <p className="text-xs leading-6">上传须先由房主向服务器明确声明作品来源：原创、已进入公有领域，或已获授权。声明不等于平台已验证版权；不确定权利时请勿上传。</p>
+          <label className="block text-xs">选择使用依据
+            <select className={inputClass+" mt-1"} value={rightsBasis} disabled={rightsBusy}
+              onChange={e=>{setRightsBasis(e.target.value as typeof rightsBasis);setRightsConfirmed(false);}}>
+              <option value="original">我创作的原创文字</option>
+              <option value="public_domain">已确认进入公有领域</option>
+              <option value="licensed">拥有明确的上传及分享授权</option>
+            </select>
+          </label>
+          <button type="button" className={buttonClass} disabled={rightsBusy}
+            onClick={()=>{void confirmRights();}}>{rightsBusy?"确认中…":rightsConfirmed?"更改或重新确认版权声明":"向测试数据库确认版权声明"}</button>
+          <p className="text-xs text-[#817668]">{rightsConfirmed?"当前会话已完成服务器确认。":"未确认前禁止上传；已存在的测试正文不受此按钮影响。"}</p>
+        </div>
         <form onSubmit={(event) => { void upload(event); }} className="mt-4 space-y-2">
           <label className="block text-xs">
             测试段落序号（0—1999）
@@ -431,12 +463,13 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
               placeholder="仅上传测试文字，勿上传真实私人书籍…" />
           </label>
           <button type="submit" className={buttonClass}
-            disabled={working || !draft.trim() || draft.length > 3000 ||
+            disabled={!rightsConfirmed || working || !draft.trim() || draft.length > 3000 ||
               uploadIndex < 0 || uploadIndex > 1999}>
             上传测试段落
           </button>
         </form>
         <V2TxtImporter client={client} roomId={roomId}
+          rightsConfirmed={rightsConfirmed}
           onComplete={() => { void refreshMetadata(); }} />
         </details>
       )}
