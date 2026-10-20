@@ -391,21 +391,20 @@ export function DemoLibrary() {
     });
     return()=>cancelAnimationFrame(frame);
   },[screen,book.id,safeChapterIndex,columnWidth,fontSize,visiblePages]);
-  useEffect(()=>{
-    if(!localReady||screen!=="reader")return;
-    setPageProgress(old=>old[pageKey]===pageOffset?old:{...old,[pageKey]:pageOffset});
-  },[localReady,screen,pageKey,pageOffset]);
-
   function turnPage(delta:-1|1){
     const stride=visiblePages;
     if(delta===1){
       if(pageOffset+stride<pageCount){
-        setPageOffset(n=>n+stride);
+        const next=pageOffset+stride;
+        setPageOffset(next);
+        setPageProgress(old=>({...old,[pageKey]:next}));
       }else if(safeChapterIndex+1<book.chapters.length){
         goChapter(safeChapterIndex+1);
       }
     }else if(pageOffset>0){
-      setPageOffset(n=>Math.max(0,n-stride));
+      const next=Math.max(0,pageOffset-stride);
+      setPageOffset(next);
+      setPageProgress(old=>({...old,[pageKey]:next}));
     }else if(safeChapterIndex>0){
       jumpToChapterEnd.current=true;
       goChapter(safeChapterIndex-1);
@@ -447,6 +446,7 @@ export function DemoLibrary() {
   function goChapter(index:number){
     if(index<0||index>=book.chapters.length)return;
     setChapterIndex(index);setPageOffset(0);setPageCount(1);
+    setPageProgress(old=>({...old,[book.id+":"+index]:0}));
     setProgress(p=>({...p,[book.id]:index}));
     setOpenNoteId(null);setSelection(null);setDrawing(false);
     setTocVisible(false);setNoteDraft("");setNotice("");
