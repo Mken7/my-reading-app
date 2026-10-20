@@ -103,13 +103,14 @@ BEGIN
 END $owner_erase$;
 DO $retained_partner$
 DECLARE room uuid:=current_setting('test.retained_room')::uuid;
+ archived jsonb;
 BEGIN
- IF NOT EXISTS(SELECT 1 FROM public.reading_highlights_v2 h
-   WHERE h.room_id=room AND h.body='[内容已删除]'
-     AND h.hidden_at IS NOT NULL) OR
-    (SELECT count(*) FROM public.reading_note_replies_v2
-      WHERE room_id=room)<>1 THEN
-   RAISE EXCEPTION 'tombstone damaged partner reply'; END IF;
+ archived:=public.v2_export_my_room_section(room,'highlights',0);
+ IF jsonb_array_length(archived->'items')<>1 OR
+   archived->'items'->0->>'body'<>'[内容已删除]' OR
+   archived->'items'->0->>'hidden_at' IS NULL OR
+   EXISTS(SELECT 1 FROM public.reading_highlights_v2 WHERE room_id=room)
+ THEN RAISE EXCEPTION 'erased note remained visible or unsanitized'; END IF;
  IF jsonb_array_length((public.v2_export_my_room_section(room,
      'notes',0))->'items')<>0 THEN
    RAISE EXCEPTION 'deleted private note leaked into export'; END IF;
