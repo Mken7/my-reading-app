@@ -77,6 +77,17 @@ try{
  }
  must(new Set(sessions).size===3,"Staging Auth identities unexpectedly identical");
  const [owner,partner,outsider]=clients;
+ checkpoint="PREFLIGHT_SCHEMA";
+ // Guard against mutating a partially migrated staging project. Check module
+ // 12 and 13 features before creating the disposable test room.
+ for(const [actor,fn,args] of [
+  [owner,"v2_my_room_history",{}],
+  [owner,"v2_my_report_receipts",{}],
+  [outsider,"v2_discover_reading_rooms",{query_text:"",page_limit:1}],
+ ]){
+  const {error}=await actor.rpc(fn,args);
+  must(!error,"Missing required V2 migration or RPC: "+fn);
+ }
  checkpoint="CREATE_ROOM";
  room=await rpc(owner,"v2_create_reading_room",{
   book_title:"STAGING E2E disposable "+Date.now(),
@@ -210,7 +221,28 @@ try{
  console.error("FAIL at test checkpoint:",checkpoint);
  console.error("test failure:",error?.message??"unknown");
  if(room){
-  console.error("Disposable test room needs isolated staging cleanup:",room);
+  // Only touch a room this run created. Never delete pre-existing staging data.
+  // A failure always stays a failed test, even if cleanup succeeds.
+  console.error("Attempting consent-gated cleanup of disposable room:",room);
+  try {
+   const [owner,partner]=clients;
+   const close=await owner.rpc("v2_change_room_state",{
+    target_room:room,target_state:"closed",
+   });
+   if(close.error||close.data!==true)throw Error("owner close not confirmed");
+   const first=await owner.rpc("v2_consent_room_purge",{target_room:room});
+   if(first.error||first.data!=="consented")throw Error("owner consent not confirmed");
+   if(sessions.length>1){
+    const second=await partner.rpc("v2_consent_room_purge",{target_room:room});
+    if(second.error||second.data!=="consented")throw Error("partner consent not confirmed");
+   }
+   const wiped=await owner.rpc("v2_purge_closed_room",{target_room:room});
+   if(wiped.error||wiped.data!=="purged")throw Error("safe purge not confirmed");
+   console.error("Disposable staging room cleanup confirmed.");
+   room=null;
+  }catch{
+   console.error("Cleanup incomplete: an authorized staging operator must examine this test room:",room);
+  }
  }
  process.exitCode=1;
 }finally{
