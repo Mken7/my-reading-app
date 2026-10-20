@@ -14,7 +14,7 @@ if(!evidenceFile||!receiptFile||!pubKeyFile){
   const pass=verifyCheckpoint(evidence,receipt,publicKey);
   console.log(pass?"VERIFIED: independently signed audit evidence matches":"REJECTED: evidence, chain or signature mismatch");
   if(!pass)process.exitCode=1;
- }catch(e){
+ }catch{
   console.error("REJECTED: cannot safely parse evidence or trusted verifier key");
   process.exitCode=1;
  }
