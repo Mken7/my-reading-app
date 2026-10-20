@@ -36,6 +36,7 @@ const server=createServer(async(req,res)=>{
  if(pathname.includes("\\")||pathname.includes("\0")){
   res.writeHead(400).end("Invalid path");return;
  }
+ if(pathname.startsWith("/my-reading-app/")) pathname=pathname.slice("/my-reading-app".length);
  // URL.path already normalizes literal .. segments; never resolve outside out.
  const file=path.resolve(root,"."+pathname+(pathname.endsWith("/")?"index.html":""));
  if(!file.startsWith(root+path.sep)){
