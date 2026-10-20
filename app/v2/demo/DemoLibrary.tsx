@@ -315,7 +315,7 @@ export function DemoLibrary() {
           version:1,
           importedBooks:books.filter(b=>b.imported),
           notes:notes.filter(n=>n.author==="我"||(n.replies?.length??0)>0),
-          saved,progress,strokes,markings,settings:{night,fontSize,doublePage},
+          saved,progress,strokes:strokes.filter(Boolean),markings,settings:{night,fontSize,doublePage},
           recentBook:bookId,
         };
         const serialized=JSON.stringify(snapshot);
@@ -468,10 +468,14 @@ export function DemoLibrary() {
     drawingRef.current=stroke;setActiveStroke(stroke);
   }
   function endStroke(){
-    if(drawingRef.current&&drawingRef.current.points.length>1){
-      setStrokes(old=>[...old.slice(-499),drawingRef.current as Stroke]);
+    // Capture the completed stroke before clearing the ref. React may run the
+    // state updater later, after drawingRef.current has become null.
+    const finished=drawingRef.current;
+    drawingRef.current=null;
+    setActiveStroke(null);
+    if(finished&&finished.points.length>1){
+      setStrokes(old=>[...old.filter(Boolean).slice(-499),finished]);
     }
-    drawingRef.current=null;setActiveStroke(null);
   }
   function sendReply(id:string){
     const content=replyDrafts[id]?.trim();
@@ -544,7 +548,7 @@ export function DemoLibrary() {
           role="img" aria-label="本地演示手写标记层"
           onPointerDown={e=>startStroke(e,index)}
           onPointerMove={moveStroke} onPointerUp={endStroke} onPointerCancel={endStroke}>
-          {[...strokes.filter(t=>t.bookId===book.id&&t.chapterIndex===index),
+          {[...strokes.filter(t=>t&&t.bookId===book.id&&t.chapterIndex===index),
             ...(activeStroke?.bookId===book.id&&activeStroke.chapterIndex===index?[activeStroke]:[])].map(t=>
             <polyline key={t.id} fill="none" stroke="#ac6550" strokeWidth=".65"
               strokeLinecap="round" strokeLinejoin="round"
@@ -735,7 +739,7 @@ export function DemoLibrary() {
               <button type="button" onClick={()=>setSelection(null)}>取消</button></div>}
             {drawing&&<div className="demo-drawing-help">
               手绘模式：用鼠标或手指在纸面上画线。
-              <button type="button" onClick={()=>setStrokes(old=>old.filter(t=>
+              <button type="button" onClick={()=>setStrokes(old=>old.filter(t=>t&&
                 !(t.bookId===book.id&&t.chapterIndex===chapterIndex)))}>清除当前页笔迹</button>
               <button type="button" onClick={()=>setDrawing(false)}>完成</button>
             </div>}
