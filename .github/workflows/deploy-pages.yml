@@ -16,6 +16,8 @@ concurrency:
 
 jobs:
   build:
+    # Never deploy a feature/draft PR through manual workflow_dispatch.
+    if: github.ref == 'refs/heads/main' && github.repository == 'Mken7/my-reading-app'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +45,7 @@ jobs:
 
   deploy:
     needs: build
+    if: github.ref == 'refs/heads/main' && github.repository == 'Mken7/my-reading-app'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
