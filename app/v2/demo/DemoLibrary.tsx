@@ -585,7 +585,7 @@ export function DemoLibrary() {
   }
 
   return (
-    <div className={"demo-app"+(night?" demo-night":"")}>
+    <div data-demo-ready={localReady?"yes":"no"} className={"demo-app"+(night?" demo-night":"")}>
       <aside className="demo-sidebar" aria-label="演示导航">
         <button className="demo-brand" onClick={()=>navigate("library")} type="button">
           <span className="demo-brand-seal">S<span>.</span></span>
