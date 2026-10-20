@@ -55,6 +55,10 @@ const injected=`<script>(() => {
     undersizedFields:undersizedFields.length,keyboardFocusOutline,authFetch,
     heading:title,bodyText:document.body.innerText.slice(0,200),
     javascriptFiles:performance.getEntriesByType("resource").filter(x=>x.name.includes("/_next/")).length,
+    scriptResponses:performance.getEntriesByType("resource")
+      .filter(x=>x.name.includes("/_next/"))
+      .slice(0,8).map(x=>[new URL(x.name).pathname.split("/").slice(-2).join("/"),x.responseStatus,x.transferSize]),
+    loadedScripts:document.querySelectorAll("script[src]").length,
     browserErrors:browserErrors.slice(0,5)});
   document.body.appendChild(result);
  };
