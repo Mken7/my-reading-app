@@ -182,6 +182,32 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
   await waitFor("!!document.querySelector('.demo-prose')","reader");
   await evalPage("document.querySelector('.demo-reader-actions .demo-icon-action').click();true");
   await waitFor("!!document.querySelector('.demo-icon-selected')","bookmark toggle");
+
+  // Regression: completing a freehand stroke used to enqueue a React state
+  // updater that read drawingRef.current after it had been cleared to null.
+  await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-reader-actions button')].find(b=>b.textContent.includes('自由手绘'));button.click();return true;})()");
+  await waitFor("!!document.querySelector('.demo-ink-layer.demo-ink-active')","freehand drawing mode");
+  const inkRect=await evalPage("(()=>{const svg=document.querySelector('.demo-ink-layer.demo-ink-active');svg.scrollIntoView({block:'center'});const r=svg.getBoundingClientRect();return {x:r.left+r.width*.4,y:r.top+r.height*.38,width:r.width,height:r.height};})()");
+  if(inkRect.width<50||inkRect.height<50)throw Error("Drawing overlay has invalid bounds");
+  const x=Math.round(inkRect.x),y=Math.round(inkRect.y);
+  if(mobile){
+   await send("Input.dispatchTouchEvent",{type:"touchStart",touchPoints:[{x,y,id:1}]},sessionId);
+   await send("Input.dispatchTouchEvent",{type:"touchMove",touchPoints:[{x:x+28,y:y+27,id:1}]},sessionId);
+   await send("Input.dispatchTouchEvent",{type:"touchEnd",touchPoints:[]},sessionId);
+  }else{
+   await send("Input.dispatchMouseEvent",{type:"mousePressed",x,y,button:"left",clickCount:1},sessionId);
+   await send("Input.dispatchMouseEvent",{type:"mouseMoved",x:x+28,y:y+27,button:"left",buttons:1},sessionId);
+   await send("Input.dispatchMouseEvent",{type:"mouseReleased",x:x+28,y:y+27,button:"left",clickCount:1},sessionId);
+  }
+  await waitFor("!!document.querySelector('.demo-ink-layer polyline')","completed ink stroke");
+  await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-reader-actions button')].find(b=>b.textContent.includes('结束手绘'));button.click();return true;})()");
+  await waitFor("!document.querySelector('.demo-ink-active')","freehand mode exits");
+  await delay(500);
+  await send("Page.reload",{ignoreCache:true},sessionId);
+  await waitFor("document.querySelector('.demo-app')?.dataset.demoReady==='yes'","ink reload");
+  await evalPage("document.querySelector('.demo-book-card').click();true");
+  await waitFor("!!document.querySelector('.demo-ink-layer polyline')","persistent saved ink stroke");
+
   await evalPage("(()=>{const target=document.querySelector('.demo-prose p');const node=target.firstChild;const range=document.createRange();range.setStart(node,0);range.setEnd(node,Math.min(9,node.textContent.length));const selection=getSelection();selection.removeAllRanges();selection.addRange(range);target.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));return true;})()");
   await waitFor("!!document.querySelector('.demo-selection-toolbar')","selection UI");
   await evalPage("document.querySelector('.demo-selection-toolbar button').click();true");
@@ -206,7 +232,7 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
   await waitFor("!!document.querySelector('.demo-night')","night mode");
   const local=await evalPage("localStorage.getItem('reading-v2-offline-ui-demo-1')?.length??0");
   if(local<100)throw Error("Local demo state never persisted");
-  console.log("PASS: offline demo import, annotation, bookmark, selection, refresh, night mode",width);
+  console.log("PASS: offline demo import, annotation, bookmark, selection, refresh, night mode, touch/mouse freehand ink and persistence",width);
  }finally{await send("Target.closeTarget",{targetId}).catch(()=>{});}
 }
 await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));
