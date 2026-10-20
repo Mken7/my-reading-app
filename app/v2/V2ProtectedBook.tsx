@@ -53,7 +53,7 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
   useEffect(()=>{
     if(!owner)return;
     let active=true;
-    void client.rpc("v2_my_book_rights",{target_room:roomId})
+    void Promise.resolve(client.rpc("v2_my_book_rights",{target_room:roomId}))
       .then(({data,error})=>{
         if(!active||error||!Array.isArray(data)||data.length<1)return;
         const stored=data[0]?.rights_basis;
