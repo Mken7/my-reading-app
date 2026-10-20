@@ -199,14 +199,18 @@ RESET ROLE;
 SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000011',false);
 SET ROLE authenticated;
 DO $purge$
+BEGIN
+ IF public.v2_purge_closed_room(current_setting('test.retained_room')::uuid)<>'purged'
+ THEN RAISE EXCEPTION 'consented room purge failed'; END IF;
+END $purge$;
+DO $purged_visibility$
 DECLARE room uuid:=current_setting('test.retained_room')::uuid;
 BEGIN
- IF public.v2_purge_closed_room(room)<>'purged' OR
-   EXISTS(SELECT 1 FROM public.reading_rooms_v2 WHERE id=room) OR
-   EXISTS(SELECT 1 FROM public.reading_members_v2 WHERE room_id=room) OR
-   public.v2_export_my_room_section(room,'info',0) IS NOT NULL
- THEN RAISE EXCEPTION 'consented room not fully purged'; END IF;
-END $purge$;
+ IF EXISTS(SELECT 1 FROM public.reading_rooms_v2 WHERE id=room)
+   OR EXISTS(SELECT 1 FROM public.reading_members_v2 WHERE room_id=room)
+   OR public.v2_export_my_room_section(room,'info',0) IS NOT NULL
+ THEN RAISE EXCEPTION 'purged data remained accessible'; END IF;
+END $purged_visibility$;
 RESET ROLE;
 
 -- Moderation records block permanent purge; not silently discarded.
