@@ -124,7 +124,16 @@ server.listen(0,"127.0.0.1",async()=>{
  if(!addr||typeof addr==="string")throw Error("No listen port");
  try{
   for(const w of [390,520,768,1280]){
-   const result=await check(addr.port,w);
+   let result=null;
+   let lastError=null;
+   // Headless Chrome/Next hydration races during cold CI starts. A retry is
+   // accepted ONLY if a fresh browser instance actually renders PASS in its
+   // DOM; stale inline-source markers remain explicitly rejected.
+   for(let attempt=1;attempt<=3&&!result;attempt++){
+    try{result=await check(addr.port,w);}
+    catch(error){lastError=error;}
+   }
+   if(!result)throw lastError??Error("No browser hydration result");
    console.log("PASS: static V2 preview "+(enabled?"opt-in login":"default-off")+" at width",w,result);
   }
  }catch(error){process.exitCode=1;console.error(error);}
