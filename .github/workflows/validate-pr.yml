@@ -50,8 +50,8 @@ jobs:
           NEXT_PUBLIC_ENABLE_V2_PREVIEW: "true"
           NEXT_PUBLIC_V2_SUPABASE_URL: https://abcdefghijklmnopqrst.supabase.co
           NEXT_PUBLIC_V2_SUPABASE_PUBLISHABLE_KEY: sb_publishable_CI_FAKE_NOT_A_REAL_KEY
-      - name: Hydrate and inspect auth forms in actual headless Chromium
-        run: node tests/browser/run-v2-static.cjs --enabled
+      - name: Inspect fake-key auth hydration with real 390px touch and desktop CDP
+        run: node tests/browser/run-v2-auth-cdp.mjs
 
 
   browser-queue:
