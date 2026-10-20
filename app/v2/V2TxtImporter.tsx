@@ -15,6 +15,7 @@ type Props = {
   client: SupabaseClient;
   roomId: string;
   onComplete: () => void;
+  rightsConfirmed: boolean;
 };
 
 const MAX_TXT_BYTES = 2_000_000;
@@ -28,7 +29,7 @@ const actionClass =
   "rounded-lg border border-[#a99b88] px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50";
 
 /** Stage-only, opt-in upload: opening a file never sends it to Supabase. */
-export function V2TxtImporter({ client, roomId, onComplete }: Props) {
+export function V2TxtImporter({ client, roomId, onComplete, rightsConfirmed }: Props) {
   const [encoding, setEncoding] = useState<TxtEncoding>("utf-8");
   const [plan, setPlan] = useState<TxtImportPlan | null>(null);
   const [fileName, setFileName] = useState("");
@@ -85,7 +86,7 @@ export function V2TxtImporter({ client, roomId, onComplete }: Props) {
   }
 
   async function uploadPlan() {
-    if (!plan || uploading || !consent ||
+    if (!plan || uploading || !consent || !rightsConfirmed ||
         !Number.isInteger(startIndex) || startIndex < 0 ||
         startIndex + plan.chunks.length > 2000 ||
         plan.chunks.length > DAILY_UPLOAD_LIMIT ||
@@ -248,7 +249,7 @@ export function V2TxtImporter({ client, roomId, onComplete }: Props) {
             我确认拥有上传权，并同意将本地 TXT / EPUB / PDF 提取出的测试文字发送到独立 V2 测试书房。
           </label>
           <button type="button" className={actionClass} onClick={() => { void uploadPlan(); }}
-            disabled={uploading || !consent || plan.chunks.length > DAILY_UPLOAD_LIMIT ||
+            disabled={uploading || !consent || !rightsConfirmed || plan.chunks.length > DAILY_UPLOAD_LIMIT ||
               !Number.isInteger(startIndex) || startIndex < 0 ||
               startIndex + plan.chunks.length > 2000 ||
               !Number.isInteger(chapterStart) || chapterStart<0 ||
