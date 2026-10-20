@@ -134,8 +134,10 @@ BEGIN
  EXCEPTION WHEN insufficient_privilege THEN NULL;
  END;
  IF (SELECT count(*) FROM public.v2_export_audit_evidence(
-    current_setting('test.found_room')::uuid))<1
- THEN RAISE EXCEPTION 'trusted audit evidence inaccessible'; END IF;
+    current_setting('test.found_room')::uuid,0,1))<>1 OR
+    EXISTS(SELECT 1 FROM public.v2_export_audit_evidence(
+    current_setting('test.found_room')::uuid,1,100)) THEN
+   RAISE EXCEPTION 'trusted audit pagination or bounded evidence failed'; END IF;
 END $reviewer_case$;
 RESET ROLE;
 
