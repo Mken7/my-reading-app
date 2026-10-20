@@ -119,7 +119,12 @@ async function inspectDemo(send,url,width,height,mobile){
    }
    throw Error("Demo interaction timed out: "+label);
   }
-  await waitFor("!!document.querySelector('.demo-book-grid .demo-book-card')","library cards");
+  await waitFor("document.querySelector('.demo-app')?.dataset.demoReady==='yes'","hydrated library");
+  // The demo now persists reading progress; isolate each viewport check so
+  // page-turn assertions do not depend on the previous device run.
+  await evaluate("localStorage.removeItem('reading-v2-offline-ui-demo-1');true");
+  await send("Page.reload",{ignoreCache:true},sessionId);
+  await waitFor("document.querySelector('.demo-app')?.dataset.demoReady==='yes'&&document.querySelectorAll('.demo-book-card').length===3","fresh library cards");
   const before=await evaluate(`(()=>{
    const shell=document.querySelector('.demo-outer');
    return {
