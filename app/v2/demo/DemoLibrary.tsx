@@ -35,6 +35,7 @@ type DemoNote = {
 };
 type Stroke={id:string;bookId:string;chapterIndex:number;points:{x:number;y:number}[]};
 type Selection={quote:string;chapterIndex:number};
+type Marking={id:string;bookId:string;chapterIndex:number;quote:string};
 const DEMO_STORAGE_KEY="reading-v2-offline-ui-demo-1";
 const MAX_DEMO_STATE=480000;
 const MAX_IMPORT_CHARS=120000;
@@ -217,6 +218,7 @@ export function DemoLibrary() {
   const [books,setBooks] = useState<DemoBook[]>(seedBooks);
   const [progress,setProgress] = useState<Record<string,number>>({});
   const [strokes,setStrokes] = useState<Stroke[]>([]);
+  const [markings,setMarkings] = useState<Marking[]>([]);
   const [drawing,setDrawing] = useState(false);
   const [activeStroke,setActiveStroke] = useState<Stroke|null>(null);
   const [selection,setSelection] = useState<Selection|null>(null);
@@ -272,6 +274,10 @@ export function DemoLibrary() {
                 ([key,val])=>key.length<=80&&Number.isInteger(val)&&Number(val)>=0&&Number(val)<=80
               )) as Record<string,number>);
             }
+            if(Array.isArray(parsed.markings))setMarkings((parsed.markings as Marking[])
+              .filter(x=>x&&typeof x.bookId==="string"&&typeof x.id==="string"&&
+                typeof x.quote==="string"&&x.quote.length<=160&&x.quote.length>0&&
+                Number.isInteger(x.chapterIndex)&&x.chapterIndex>=0).slice(0,500));
             if(Array.isArray(parsed.strokes))setStrokes((parsed.strokes as Stroke[]).filter(
               x=>x&&typeof x.id==="string"&&typeof x.bookId==="string"&&
                 Number.isInteger(x.chapterIndex)&&Array.isArray(x.points)&&x.points.length<=1200&&
@@ -301,7 +307,7 @@ export function DemoLibrary() {
           version:1,
           importedBooks:books.filter(b=>b.imported),
           notes:notes.filter(n=>n.author==="我"),
-          saved,progress,strokes,settings:{night,fontSize,doublePage},
+          saved,progress,strokes,markings,settings:{night,fontSize,doublePage},
           recentBook:bookId,
         };
         const serialized=JSON.stringify(snapshot);
@@ -311,7 +317,7 @@ export function DemoLibrary() {
       }catch{setNotice("本地保存失败：可能已达到浏览器容量限制。请先导出备份。");}
     },320);
     return()=>window.clearTimeout(timeout);
-  },[localReady,books,notes,saved,progress,strokes,night,fontSize,doublePage,bookId]);
+  },[localReady,books,notes,saved,progress,strokes,markings,night,fontSize,doublePage,bookId]);
 
   const book=books.find(item=>item.id===bookId)??books[0];
   const chapter=book.chapters[chapterIndex];
@@ -320,7 +326,7 @@ export function DemoLibrary() {
   const currentNotes=notes.filter(item=>item.bookId===book.id && item.chapterIndex===chapterIndex);
   const allBookNotes=notes.filter(item=>item.bookId===book.id);
   const results=books.filter(item=>
-    (kind==="全部"||item.kind===kind) &&
+    (kind==="全部"||(kind==="我的导入"?item.imported===true:item.kind===kind)) &&
     (item.title+item.subtitle+item.author).toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())
   );
   const percent=Math.round((chapterIndex+1)/book.chapters.length*100);
@@ -350,6 +356,122 @@ export function DemoLibrary() {
     setSaved(current=>current.includes(saveKey)?current.filter(k=>k!==saveKey):[...current,saveKey]);
     setNotice(bookmarked?"已移除这页的演示书签。":"已在当前页放入演示书签。");
   }
+  async function importFile(event:ChangeEvent<HTMLInputElement>){
+    const file=event.currentTarget.files?.[0];
+    event.currentTarget.value="";
+    if(!file||importing)return;
+    if(books.filter(b=>b.imported).length>=MAX_IMPORTED_BOOKS){
+      setNotice("最多保存 5 本本地导入书籍；请先删除一本。");return;
+    }
+    const lower=file.name.toLowerCase();
+    const isPdf=lower.endsWith(".pdf"),isEpub=lower.endsWith(".epub");
+    if(!isPdf&&!isEpub&&!lower.endsWith(".txt")){
+      setNotice("请选择 TXT、EPUB 或可提取文字的 PDF 文件。");return;
+    }
+    if(file.size>(isPdf?10000000:isEpub?8000000:2000000)){
+      setNotice("文件过大：TXT 最多 2MB、EPUB 8MB、PDF 10MB。");return;
+    }
+    setImporting(true);setNotice("正在浏览器本地解析文件，不会上传。");
+    try{
+      const bytes=new Uint8Array(await file.arrayBuffer());
+      const prepared=isPdf?await preparePdf(bytes):isEpub?await prepareEpub(bytes)
+        :prepareTxt(decodeTxt(bytes,"utf-8"));
+      const textLength=prepared.chunks.reduce((n,t)=>n+t.length,0);
+      if(textLength>MAX_IMPORT_CHARS||prepared.chunks.length>80||prepared.chunks.length<1)
+        throw Error("演示模式单本书最多 12 万字符、80 段；请选较短的测试读物。");
+      const title=file.name.replace(/\.(?:txt|pdf|epub)$/i,"").slice(0,70);
+      const id="local-"+crypto.randomUUID();
+      const chapters:Chapter[]=prepared.chunks.map((body,index)=>{
+        const match=[...prepared.chapters].reverse().find(c=>c.chunkIndex<=index);
+        return {
+          name:match?.title?.slice(0,65)??("第 "+(index+1)+" 段"),
+          kicker:"本地导入 · "+String(index+1).padStart(2,"0")+" / "+prepared.chunks.length,
+          paragraphs:body.split(/\n+/).map(p=>p.trim()).filter(Boolean),
+          marked:"",companionThought:"",
+        };
+      });
+      setBooks(old=>[...old,{id,title:title||"未命名作品",
+        subtitle:"仅保存在当前浏览器 · 可以离线阅读",author:"我导入的测试读物",
+        kind:"我的导入",edition:"LOCAL ONLY",color:"moss",initials:"本",
+        chapters,imported:true}]);
+      setBookId(id);setChapterIndex(0);setScreen("reader");setKind("全部");
+      setNotice("已导入本地阅读。受浏览器容量限制，请及时备份，切勿依赖它保存唯一原稿。");
+    }catch(error){
+      setNotice(error instanceof Error?error.message:"无法安全解析此文件。");
+    }finally{setImporting(false);}
+  }
+  function deleteLocalBook(id:string){
+    if(!books.find(b=>b.id===id)?.imported)return;
+    if(!window.confirm("将从这个浏览器的演示书架中删除此书及其批注、划线与书签。确定吗？"))return;
+    setBooks(old=>old.filter(x=>x.id!==id));
+    setNotes(old=>old.filter(n=>n.bookId!==id));
+    setSaved(old=>old.filter(k=>!k.startsWith(id+":")));
+    setMarkings(old=>old.filter(m=>m.bookId!==id));
+    setStrokes(old=>old.filter(d=>d.bookId!==id));
+    setProgress(old=>{const next={...old};delete next[id];return next;});
+    if(bookId===id){setBookId("rain");setChapterIndex(0);}
+    setNotice("本地导入书籍已移除。");
+  }
+  function saveExport(){
+    const raw=localStorage.getItem(DEMO_STORAGE_KEY);
+    if(!raw){setNotice("还没有可导出的本地数据。");return;}
+    const blob=new Blob([raw],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;a.download="reading-demo-backup.json";
+    a.click();window.setTimeout(()=>URL.revokeObjectURL(url),3000);
+    setNotice("已请求下载本地演示备份。它是明文 JSON，请妥善保存。");
+  }
+  function captureSelection(index:number,container:HTMLElement){
+    if(drawing)return;
+    const selection=window.getSelection();
+    if(!selection||selection.isCollapsed||!selection.anchorNode||!selection.focusNode||
+      !container.contains(selection.anchorNode)||!container.contains(selection.focusNode))return;
+    const quote=selection.toString().trim();
+    if(quote.length<2||quote.length>160)return;
+    setSelection({quote,chapterIndex:index});
+    setNotesVisible(true);
+  }
+  function markSelection(){
+    if(!selection||selection.chapterIndex!==chapterIndex)return;
+    if(!markings.some(m=>m.bookId===book.id&&m.chapterIndex===chapterIndex&&m.quote===selection.quote)){
+      setMarkings(old=>[...old,{id:crypto.randomUUID(),bookId:book.id,
+        chapterIndex,quote:selection.quote}]);
+    }
+    setNotice("这段文字已划线，保存在当前浏览器。");
+    window.getSelection()?.removeAllRanges();
+  }
+  function position(event:PointerEvent<SVGSVGElement>){
+    const r=event.currentTarget.getBoundingClientRect();
+    return {x:Math.min(1,Math.max(0,(event.clientX-r.left)/r.width)),
+      y:Math.min(1,Math.max(0,(event.clientY-r.top)/r.height))};
+  }
+  function startStroke(event:PointerEvent<SVGSVGElement>,index:number){
+    if(!drawing)return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const stroke:Stroke={id:crypto.randomUUID(),bookId:book.id,chapterIndex:index,
+      points:[position(event)]};
+    drawingRef.current=stroke;setActiveStroke(stroke);
+  }
+  function moveStroke(event:PointerEvent<SVGSVGElement>){
+    if(!drawingRef.current)return;
+    const stroke={...drawingRef.current,
+      points:[...drawingRef.current.points.slice(-1198),position(event)]};
+    drawingRef.current=stroke;setActiveStroke(stroke);
+  }
+  function endStroke(){
+    if(drawingRef.current&&drawingRef.current.points.length>1){
+      setStrokes(old=>[...old.slice(-499),drawingRef.current as Stroke]);
+    }
+    drawingRef.current=null;setActiveStroke(null);
+  }
+  function sendReply(id:string){
+    const content=replyDrafts[id]?.trim();
+    if(!content||content.length>240)return;
+    setNotes(old=>old.map(n=>n.id===id?{...n,replies:[...(n.replies??[]),{
+      id:crypto.randomUUID(),content}]}:n));
+    setReplyDrafts(old=>({...old,[id]:""}));
+    setNotice("回复已存入本地演示数据。");
+  }
   function saveNote(event:FormEvent<HTMLFormElement>){
     event.preventDefault();
     const body=noteDraft.trim();
@@ -358,13 +480,13 @@ export function DemoLibrary() {
       id:"me-"+(++noteSequence.current),
       bookId:book.id,
       chapterIndex,
-      quote:chapter.marked,
+      quote:selection?.chapterIndex===chapterIndex?selection.quote:(chapter.marked||chapter.paragraphs[0]?.slice(0,60)||""),
       content:body.slice(0,240),
       author:"我",
     };
     setNotes(current=>[...current,note]);
-    setOpenNoteId(note.id);setNotesVisible(true);setNoteDraft("");
-    setNotice("这条批注只保存在当前演示页面中，刷新后会还原。");
+    setOpenNoteId(note.id);setNotesVisible(true);setNoteDraft("");setSelection(null);
+    setNotice("批注已保存到本地浏览器；刷新页面后仍可查看。");
   }
   function removeNote(id:string){
     const item=notes.find(x=>x.id===id);
@@ -420,6 +542,16 @@ export function DemoLibrary() {
       </div>
       <blockquote>“{item.quote}”</blockquote>
       <p>{item.content}</p>
+      {(item.replies??[]).map(reply=><p key={reply.id} className="demo-local-reply">
+        ↳ 我的回复：{reply.content}
+      </p>)}
+      <div className="demo-reply-row">
+        <input aria-label={"回复 "+item.author+" 的批注"} maxLength={240}
+          value={replyDrafts[item.id]??""} placeholder="写一条回复……"
+          onChange={e=>setReplyDrafts(old=>({...old,[item.id]:e.target.value}))}/>
+        <button type="button" disabled={!replyDrafts[item.id]?.trim()}
+          onClick={()=>sendReply(item.id)}>回复</button>
+      </div>
     </article>;
   }
 
