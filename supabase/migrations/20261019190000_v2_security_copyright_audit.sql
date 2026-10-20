@@ -150,7 +150,7 @@ $$;
 
 -- Only pre-provisioned trusted reviewers may export canonical event material
 -- for an independently retained/signed checksum. No plaintext note bodies.
-CREATE FUNCTION public.v2_export_audit_evidence(target_room uuid)
+CREATE FUNCTION public.v2_export_audit_evidence(target_room uuid,after_seq bigint DEFAULT 0,page_size integer DEFAULT 100)
 RETURNS TABLE(sequence_number bigint,previous_hash text,event_hash text,
  canonical_event text)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path=''
@@ -163,9 +163,12 @@ AS $$
     'occurred_at',a.occurred_at)::text
  FROM public.reading_audit_v2 a
  WHERE a.room_id=target_room AND auth.uid() IS NOT NULL
+ AND coalesce(after_seq,0) BETWEEN 0 AND 9223372036854775806
+ AND a.sequence_number>coalesce(after_seq,0)
  AND EXISTS(SELECT 1 FROM public.reading_v2_trusted_reviewers rev
  WHERE rev.user_id=auth.uid())
- ORDER BY a.sequence_number LIMIT 5000;
+ ORDER BY a.sequence_number
+ LIMIT least(greatest(coalesce(page_size,100),1),200);
 $$;
 
 DO $$
@@ -175,7 +178,7 @@ BEGIN
  'v2_confirm_book_rights(uuid,text)','v2_my_book_rights(uuid)',
  'v2_enforce_book_rights()','v2_my_report_receipts()',
  'v2_review_queue()','v2_decide_report(uuid,text,text)',
- 'v2_verify_room_audit(uuid)','v2_export_audit_evidence(uuid)'
+ 'v2_verify_room_audit(uuid)','v2_export_audit_evidence(uuid,bigint,integer)'
  ] LOOP
  EXECUTE 'REVOKE ALL ON FUNCTION public.'||fn||' FROM PUBLIC,anon,authenticated';
  END LOOP;
@@ -186,4 +189,4 @@ GRANT EXECUTE ON FUNCTION public.v2_my_report_receipts() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.v2_review_queue() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.v2_decide_report(uuid,text,text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.v2_verify_room_audit(uuid) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.v2_export_audit_evidence(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.v2_export_audit_evidence(uuid,bigint,integer) TO authenticated;
