@@ -30,6 +30,8 @@ jobs:
         run: test -f out/index.html
       - name: Browser smoke the exported V2 preview at narrow and desktop widths
         run: node tests/browser/run-v2-static.cjs
+      - name: Verify no-login library, page turning, partner annotations, settings and bookmark
+        run: node tests/browser/run-v2-demo-cdp.mjs
 
 
   browser-auth-screen:
