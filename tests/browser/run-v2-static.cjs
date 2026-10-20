@@ -26,20 +26,27 @@ const injected=`<script>(() => {
   const unlabeled=controls.filter(node=>!node.getAttribute("aria-label")&&
     !node.closest("label")&&!node.getAttribute("aria-labelledby")&&
     !node.textContent?.trim()&&!node.getAttribute("type")?.includes("submit"));
+  const formFields=[...document.querySelectorAll("input[type=email],input[type=password]")];
+  const undersizedFields=formFields.filter(field=>
+    field.getBoundingClientRect().height<43.5 || field.getBoundingClientRect().width<44);
+  const keyboardFocusOutline=getComputedStyle(formFields[0]??document.body).outlineStyle;
   const authFetch=performance.getEntriesByType("resource").some(item=>
    /\\.supabase\\.co\\/(?:rest|auth|realtime)\\//.test(item.name));
   const overflowing=document.documentElement.scrollWidth>innerWidth+4;
   const active=${enabled};
   const ok=active
     ? Boolean(emailForm&&realForm&&!overflowing&&viewport&&
-      document.querySelector("form")&&!document.querySelector("input[type=hidden][name=service_role]"))
+      document.querySelector("form")&&undersizedFields.length===0&&
+      document.querySelector(".v2-preview-shell")&&
+      !document.querySelector("input[type=hidden][name=service_role]"))
     : title.includes("V2 预览默认关闭")&&!realForm&&!authFetch&&!overflowing;
   const result=document.createElement("div");
   result.id="v2-static-test-result";
   result.textContent=(ok?"V2_STATIC_PASS:":"V2_STATIC_FAIL:")+
    JSON.stringify({width:innerWidth,overflowing,disabled:!!title.includes("默认关闭"),
     exposedAuthForm:!!realForm,hasEmail:!!emailForm,viewport:!!viewport,
-    unlabeledInputs:unlabeled.filter(x=>x.matches("input")).length,authFetch});
+    unlabeledInputs:unlabeled.filter(x=>x.matches("input")).length,
+    undersizedFields:undersizedFields.length,keyboardFocusOutline,authFetch});
   document.body.appendChild(result);
  };
  window.setTimeout(report,2500);
