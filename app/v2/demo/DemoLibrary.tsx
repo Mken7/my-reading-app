@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 
 type Chapter = {
   name: string;
@@ -217,6 +217,7 @@ export function DemoLibrary() {
   const [doublePage,setDoublePage] = useState(true);
   const [saved,setSaved] = useState<string[]>([]);
   const [notice,setNotice] = useState("");
+  const noteSequence=useRef(0);
 
   const book=books.find(item=>item.id===bookId)??books[0];
   const chapter=book.chapters[chapterIndex];
@@ -251,7 +252,7 @@ export function DemoLibrary() {
     const body=noteDraft.trim();
     if(body.length<2)return;
     const note:DemoNote={
-      id:"me-"+Date.now()+"-"+notes.length,
+      id:"me-"+(++noteSequence.current),
       bookId:book.id,
       chapterIndex,
       quote:chapter.marked,
@@ -364,7 +365,7 @@ export function DemoLibrary() {
 
         {screen==="library"&&(
           <main className="demo-content" aria-label="演示书架">
-            <div className="demo-greeting"><span>WEDNESDAY, OCTOBER 20</span><p>每一次翻页，都是一次相遇。</p></div>
+            <div className="demo-greeting"><span>A QUIET MOMENT TO READ</span><p>每一次翻页，都是一次相遇。</p></div>
             <section className="demo-hero">
               <div className="demo-hero-copy">
                 <div className="demo-eyebrow"><span className="demo-gold-line"/> OUR LITTLE LIBRARY</div>
