@@ -1,0 +1,90 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- Node CommonJS Chromium launcher */
+const fs=require("node:fs");
+const http=require("node:http");
+const path=require("node:path");
+const {spawn,spawnSync}=require("node:child_process");
+
+const out=path.resolve(__dirname,"../../out");
+if(!fs.existsSync(path.join(out,"v2","index.html"))){
+ console.error("Expected a completed GitHub Pages static export in out/v2/index.html");
+ process.exit(1);
+}
+const chrome=["google-chrome","google-chrome-stable","chromium","chromium-browser"]
+ .find(name=>spawnSync("which",[name],{encoding:"utf8"}).status===0);
+if(!chrome){console.error("A real Chromium browser is required");process.exit(1);}
+
+const injected=`<script>(() => {
+ let done=false;
+ const report=()=>{
+  if(done)return;done=true;
+  const title=document.querySelector("h2")?.textContent||"";
+  const realForm=document.querySelector("input[type=password]");
+  const authFetch=performance.getEntriesByType("resource").some(item=>
+   /\\.supabase\\.co\\/(?:rest|auth|realtime)\\//.test(item.name));
+  const overflowing=document.documentElement.scrollWidth>innerWidth+4;
+  const ok=title.includes("V2 预览默认关闭")&&!realForm&&!authFetch&&!overflowing;
+  const result=document.createElement("div");
+  result.id="v2-static-test-result";
+  result.textContent=(ok?"V2_STATIC_PASS:":"V2_STATIC_FAIL:")+
+   JSON.stringify({width:innerWidth,overflowing,disabled:!!title.includes("默认关闭"),
+    exposedAuthForm:!!realForm,authFetch});
+  document.body.appendChild(result);
+ };
+ window.setTimeout(report,1900);
+})()</script>`;
+
+const server=http.createServer((req,res)=>{
+ const pathname=decodeURIComponent(new URL(req.url,"http://localhost").pathname);
+ const cleaned=pathname.replace(/^\/my-reading-app/,"");
+ const relative=cleaned.endsWith("/")?cleaned+"index.html":cleaned;
+ const filename=path.resolve(out,"."+relative);
+ if(!filename.startsWith(out+path.sep)){res.writeHead(404).end();return;}
+ fs.readFile(filename,(error,buf)=>{
+  if(error){res.writeHead(404).end("Missing");return;}
+  const ext=path.extname(filename);
+  if(ext===".html"){
+   const html=buf.toString("utf8").replace("</body>",injected+"</body>");
+   res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"});
+   res.end(html);return;
+  }
+  const mime=ext===".css"?"text/css":ext===".js"?"text/javascript":
+   ext===".svg"?"image/svg+xml":"application/octet-stream";
+  res.writeHead(200,{"Content-Type":mime});
+  res.end(buf);
+ });
+});
+
+async function check(port,width){
+ const url="http://127.0.0.1:"+port+"/my-reading-app/v2/";
+ return new Promise((resolve,reject)=>{
+  const browser=spawn(chrome,[
+   "--headless=new","--no-sandbox","--disable-gpu","--disable-extensions",
+   "--disable-dev-shm-usage","--no-first-run",
+   "--window-size="+width+",860","--virtual-time-budget=5000",
+   "--dump-dom",url,
+  ],{stdio:["ignore","pipe","pipe"]});
+  let stdout="",stderr="";
+  const timeout=setTimeout(()=>browser.kill("SIGKILL"),45000);
+  browser.stdout.on("data",data=>{if(stdout.length<300000)stdout+=data.toString();});
+  browser.stderr.on("data",data=>{if(stderr.length<1800)stderr+=data.toString();});
+  browser.on("error",error=>{clearTimeout(timeout);reject(error);});
+  browser.on("close",code=>{
+   clearTimeout(timeout);
+   const text=stdout.match(/V2_STATIC_(?:PASS|FAIL):[^<]*/)?.[0];
+   if(code===0&&text?.startsWith("V2_STATIC_PASS:"))resolve(text);
+   else reject(Error("Static preview "+width+"px failed: "+(text??"missing test result")+
+    " "+stderr.slice(-350)));
+  });
+ });
+}
+server.listen(0,"127.0.0.1",async()=>{
+ const addr=server.address();
+ if(!addr||typeof addr==="string")throw Error("No listen port");
+ try{
+  for(const w of [520,768,1280]){
+   const result=await check(addr.port,w);
+   console.log("PASS: static V2 preview remains locked at browser width",w,result);
+  }
+ }catch(error){process.exitCode=1;console.error(error);}
+ finally{server.close();}
+});
