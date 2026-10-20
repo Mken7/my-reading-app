@@ -33,7 +33,7 @@ type DemoNote = {
   author: "我" | "共读伙伴";
   replies?: {id:string;content:string}[];
 };
-type Stroke={id:string;bookId:string;chapterIndex:number;points:{x:number;y:number}[]};
+type Stroke={id:string;bookId:string;chapterIndex:number;page?:number;points:{x:number;y:number}[]};
 type Selection={quote:string;chapterIndex:number};
 type Marking={id:string;bookId:string;chapterIndex:number;quote:string};
 const DEMO_STORAGE_KEY="reading-v2-offline-ui-demo-1";
@@ -303,6 +303,7 @@ export function DemoLibrary() {
             if(Array.isArray(parsed.strokes))setStrokes((parsed.strokes as Stroke[]).filter(
               x=>x&&typeof x.id==="string"&&typeof x.bookId==="string"&&
                 Number.isInteger(x.chapterIndex)&&Array.isArray(x.points)&&x.points.length<=1200&&
+                (x.page===undefined||(Number.isInteger(x.page)&&x.page>=0&&x.page<10000))&&
                 x.points.every(p=>typeof p.x==="number"&&p.x>=0&&p.x<=1&&
                   typeof p.y==="number"&&p.y>=0&&p.y<=1)
             ).slice(0,500));
@@ -543,10 +544,10 @@ export function DemoLibrary() {
     return {x:Math.min(1,Math.max(0,(event.clientX-r.left)/r.width)),
       y:Math.min(1,Math.max(0,(event.clientY-r.top)/r.height))};
   }
-  function startStroke(event:PointerEvent<SVGSVGElement>,index:number){
+  function startStroke(event:PointerEvent<SVGSVGElement>,index:number,page:number){
     if(!drawing)return;
     event.currentTarget.setPointerCapture(event.pointerId);
-    const stroke:Stroke={id:crypto.randomUUID(),bookId:book.id,chapterIndex:index,
+    const stroke:Stroke={id:crypto.randomUUID(),bookId:book.id,chapterIndex:index,page,
       points:[position(event)]};
     drawingRef.current=stroke;setActiveStroke(stroke);
   }
@@ -597,48 +598,60 @@ export function DemoLibrary() {
     if(openNoteId===id)setOpenNoteId(null);
     setNotice("已从演示界面移除这条批注。");
   }
-  function renderChapter(index:number,secondary=false){
+  function renderChapter(index:number,shownPage:number,secondary=false){
     const section=book.chapters[index];
     if(!section)return null;
-    const linkedNote=notes.find(x=>x.bookId===book.id && x.chapterIndex===index && x.author==="共读伙伴");
+    const linkedNote=notes.find(x=>x.bookId===book.id&&x.chapterIndex===index&&x.author==="共读伙伴");
+    const isFirst=index===safeChapterIndex&&!secondary;
     return (
-      <article className={"demo-paper-page"+(secondary?" demo-paper-page-next":"")}
-        key={book.id+":"+index} aria-label={section.name}>
-        <div className="demo-chapter-ornament">✧</div>
-        <div className="demo-chapter-kicker">{section.kicker}</div>
-        <h2 className="demo-chapter-name">{section.name}</h2>
-        <div className="demo-prose" style={{fontSize:fontSize+"px"}}
-          onMouseUp={e=>captureSelection(index,e.currentTarget)}
-          onTouchEnd={e=>captureSelection(index,e.currentTarget)}>
-          {section.paragraphs.map((paragraph,i)=>{
-            const personal=markings.find(m=>m.bookId===book.id&&m.chapterIndex===index&&
-              paragraph.includes(m.quote));
-            const match=personal?.quote||(section.marked&&paragraph.includes(section.marked)
-              ?section.marked:"");
-            const start=match?paragraph.indexOf(match):-1;
-            if(start<0)return <p key={i}>{paragraph}</p>;
-            return <p key={i}>
-              {paragraph.slice(0,start)}
-              <button type="button" className="demo-quoted-mark"
-                aria-label={"查看这段划线与批注："+match}
-                onClick={()=>{
-                  const matched=notes.find(n=>n.bookId===book.id&&
-                    n.chapterIndex===index&&n.quote===match);
-                  setOpenNoteId(matched?.id??linkedNote?.id??null);
-                  setNotesVisible(true);
-                  setNotice("点击划线可查看页边批注；也可以选中文字创建自己的划线。");
-                }}>{match}</button>
-              {paragraph.slice(start+match.length)}
-            </p>;
-          })}
+      <article className={"demo-paper-page demo-physical-page"+(secondary?" demo-paper-page-next":"")}
+        key={book.id+":"+index+":"+shownPage} aria-label={section.name+" · 第 "+(shownPage+1)+" 页"}>
+        <div className="demo-flow-viewport" ref={isFirst?flowViewportRef:undefined}>
+          <div className="demo-column-flow"
+            ref={isFirst?flowRef:undefined}
+            style={{
+              columnWidth:columnWidth>0?columnWidth+"px":undefined,
+              transform:columnWidth>0?"translate3d(-"+(shownPage*columnWidth)+"px,0,0)":undefined,
+            }}>
+            <div className="demo-chapter-ornament">✧</div>
+            <div className="demo-chapter-kicker">{section.kicker}</div>
+            <h2 className="demo-chapter-name">{section.name}</h2>
+            <div className="demo-prose" style={{fontSize:fontSize+"px"}}
+              onMouseUp={e=>captureSelection(index,e.currentTarget)}
+              onTouchEnd={e=>captureSelection(index,e.currentTarget)}>
+              {section.paragraphs.map((paragraph,i)=>{
+                const personal=markings.find(m=>m.bookId===book.id&&m.chapterIndex===index&&
+                  paragraph.includes(m.quote));
+                const match=personal?.quote||(section.marked&&paragraph.includes(section.marked)
+                  ?section.marked:"");
+                const start=match?paragraph.indexOf(match):-1;
+                if(start<0)return <p key={i}>{paragraph}</p>;
+                return <p key={i}>
+                  {paragraph.slice(0,start)}
+                  <button type="button" className="demo-quoted-mark"
+                    aria-label={"查看这段划线与批注："+match}
+                    onClick={()=>{
+                      const matched=notes.find(n=>n.bookId===book.id&&
+                        n.chapterIndex===index&&n.quote===match);
+                      setOpenNoteId(matched?.id??linkedNote?.id??null);
+                      setNotesVisible(true);
+                      setNotice("点击划线查看批注；也可以选中文字创建自己的划线。");
+                    }}>{match}</button>
+                  {paragraph.slice(start+match.length)}
+                </p>;
+              })}
+            </div>
+          </div>
         </div>
         <svg className={"demo-ink-layer"+(drawing?" demo-ink-active":"")}
           viewBox="0 0 100 100" preserveAspectRatio="none"
           role="img" aria-label="本地演示手写标记层"
-          onPointerDown={e=>startStroke(e,index)}
+          onPointerDown={e=>startStroke(e,index,shownPage)}
           onPointerMove={moveStroke} onPointerUp={endStroke} onPointerCancel={endStroke}>
-          {[...strokes.filter(t=>t&&t.bookId===book.id&&t.chapterIndex===index),
-            ...(activeStroke?.bookId===book.id&&activeStroke.chapterIndex===index?[activeStroke]:[])].map(t=>
+          {[...strokes.filter(t=>t&&t.bookId===book.id&&t.chapterIndex===index&&
+              (t.page??0)===shownPage),
+            ...(activeStroke?.bookId===book.id&&activeStroke.chapterIndex===index&&
+              (activeStroke.page??0)===shownPage?[activeStroke]:[])].map(t=>
             <polyline key={t.id} fill="none" stroke="#ac6550" strokeWidth=".65"
               strokeLinecap="round" strokeLinejoin="round"
               points={t.points.map(p=>(p.x*100)+","+(p.y*100)).join(" ")}/>
@@ -646,7 +659,7 @@ export function DemoLibrary() {
         </svg>
         <div className="demo-paper-footer">
           <span>SHARED READING ROOM</span>
-          <span>{String(index+1).padStart(2,"0")} / {String(book.chapters.length).padStart(2,"0")}</span>
+          <span>{String(shownPage+1).padStart(2,"0")} / {String(index+1).padStart(2,"0")}</span>
         </div>
       </article>
     );
@@ -829,7 +842,7 @@ export function DemoLibrary() {
             {drawing&&<div className="demo-drawing-help">
               手绘模式：用鼠标或手指在纸面上画线。
               <button type="button" onClick={()=>setStrokes(old=>old.filter(t=>t&&
-                !(t.bookId===book.id&&t.chapterIndex===chapterIndex)))}>清除当前页笔迹</button>
+                !(t.bookId===book.id&&t.chapterIndex===chapterIndex&&(t.page??0)===pageOffset)))}>清除当前页笔迹</button>
               <button type="button" onClick={()=>setDrawing(false)}>完成</button>
             </div>}
             <div className="demo-reading-layout">
