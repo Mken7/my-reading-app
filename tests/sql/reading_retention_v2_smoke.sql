@@ -167,16 +167,23 @@ RESET ROLE;
 SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000011',false);
 SET ROLE authenticated;
 DO $close$
+BEGIN
+ IF NOT public.v2_change_room_state(current_setting('test.retained_room')::uuid,'closed')
+ THEN RAISE EXCEPTION 'close failed'; END IF;
+END $close$;
+DO $owner_agrees$
+BEGIN
+ IF public.v2_consent_room_purge(current_setting('test.retained_room')::uuid)<>'consented'
+ THEN RAISE EXCEPTION 'owner consent denied'; END IF;
+END $owner_agrees$;
+DO $not_deleted$
 DECLARE room uuid:=current_setting('test.retained_room')::uuid;
 BEGIN
- IF NOT public.v2_change_room_state(room,'closed')
-   OR public.v2_change_room_state(room,'active')
-   OR public.v2_can_edit_room(room)
-   OR public.v2_purge_closed_room(room)<>'waiting_for_consent'
-   OR public.v2_consent_room_purge(room)<>'consented'
-   OR public.v2_purge_closed_room(room)<>'waiting_for_consent' THEN
-   RAISE EXCEPTION 'closed room reopened/purged without partner consent'; END IF;
-END $close$;
+ IF public.v2_can_edit_room(room)
+ OR public.v2_change_room_state(room,'active')
+ OR public.v2_purge_closed_room(room)<>'waiting_for_consent'
+ THEN RAISE EXCEPTION 'room was reopened or deleted without partner consent'; END IF;
+END $not_deleted$;
 RESET ROLE;
 
 SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000012',false);
