@@ -232,6 +232,24 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
   await waitFor("!!document.querySelector('.demo-night')","night mode");
   const local=await evalPage("localStorage.getItem('reading-v2-offline-ui-demo-1')?.length??0");
   if(local<100)throw Error("Local demo state never persisted");
+  // Long imported TXT (like book/PDF text chunks) must flow horizontally
+  // into physical pages rather than expanding the paper and desktop scrollbar.
+  await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-menu-item')].find(b=>b.textContent.includes('我的书架'));button.click();return true;})()");
+  await waitFor("!!document.querySelector('.demo-file-input')","return to bookshelf");
+  await evalPage("(()=>{const text=('这是用于分页回归的原创测试文字。它需要在固定纸面内连续换行，下一页必须保留全部内容，而不能让阅读者一直向下滚动。\\n\\n').repeat(85);const input=document.querySelector('.demo-file-input');const dt=new DataTransfer();dt.items.add(new File([text],'长文本翻页测试.txt',{type:'text/plain'}));input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));return true;})()");
+  await waitFor("document.querySelector('.demo-reader-back h1')?.textContent==='长文本翻页测试'","long TXT book import");
+  await waitFor("(()=>{const flow=document.querySelector('.demo-column-flow');const label=document.querySelector('.demo-progress-label');return flow&&flow.clientWidth>0&&flow.scrollWidth>flow.clientWidth*1.7&&label?.textContent.includes('页');})()","actual multi-column book pagination");
+  const oldLabel=await evalPage("document.querySelector('.demo-progress-label').textContent");
+  const beforeLayout=await evalPage("(()=>{const page=document.querySelector('.demo-physical-page');const flow=document.querySelector('.demo-column-flow');return {pageHeight:page.clientHeight,textHeight:flow.clientHeight,paperOverflow:getComputedStyle(page).overflow,desktopOverflow:getComputedStyle(document.querySelector('.demo-outer')).overflowY};})()");
+  if(beforeLayout.textHeight>beforeLayout.pageHeight||beforeLayout.paperOverflow!=="hidden")
+   throw Error("Page exceeded fixed paper height: "+JSON.stringify(beforeLayout));
+  if(width>=1000&&beforeLayout.desktopOverflow!=="hidden")
+   throw Error("Desktop reader still uses vertical scrolling: "+JSON.stringify(beforeLayout));
+  await evalPage("document.querySelector('.demo-page-navigation button:last-child').click();true");
+  await waitFor("document.querySelector('.demo-progress-label')?.textContent!=="+JSON.stringify(oldLabel),"physical page advance without chapter jump");
+  const changed=await evalPage("document.querySelector('.demo-column-flow').style.transform");
+  if(!changed.includes("translate3d(-"))throw Error("Book did not advance to a new column");
+
   console.log("PASS: offline demo import, annotation, bookmark, selection, refresh, night mode, touch/mouse freehand ink and persistence",width);
  }finally{await send("Target.closeTarget",{targetId}).catch(()=>{});}
 }
