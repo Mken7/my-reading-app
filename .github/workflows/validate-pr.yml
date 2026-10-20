@@ -85,3 +85,30 @@ jobs:
           PGUSER: postgres
           PGPASSWORD: test-only-password
           PGDATABASE: access_policy_test
+
+  staging-three-accounts:
+    # Never run with secrets on PRs, forks, or an unrelated branch.
+    if: github.event_name == 'workflow_dispatch' && github.ref_name == 'feat/phase0-foundation-2026-10-18'
+    runs-on: ubuntu-latest
+    environment: v2-staging
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Live isolated staging Auth, rights, RLS, Realtime and cleanup
+        run: node tests/staging/run-supabase-e2e.mjs
+        env:
+          V2_ALLOW_MUTATING_STAGING_TEST: I_CONFIRM_ISOLATED_STAGING_ONLY
+          V2_STAGING_URL: ${{ secrets.V2_STAGING_URL }}
+          V2_STAGING_PROJECT_REF: ${{ secrets.V2_STAGING_PROJECT_REF }}
+          V2_STAGING_PUBLISHABLE_KEY: ${{ secrets.V2_STAGING_PUBLISHABLE_KEY }}
+          V2_STAGING_OWNER_EMAIL: ${{ secrets.V2_STAGING_OWNER_EMAIL }}
+          V2_STAGING_OWNER_PASSWORD: ${{ secrets.V2_STAGING_OWNER_PASSWORD }}
+          V2_STAGING_PARTNER_EMAIL: ${{ secrets.V2_STAGING_PARTNER_EMAIL }}
+          V2_STAGING_PARTNER_PASSWORD: ${{ secrets.V2_STAGING_PARTNER_PASSWORD }}
+          V2_STAGING_OUTSIDER_EMAIL: ${{ secrets.V2_STAGING_OUTSIDER_EMAIL }}
+          V2_STAGING_OUTSIDER_PASSWORD: ${{ secrets.V2_STAGING_OUTSIDER_PASSWORD }}
