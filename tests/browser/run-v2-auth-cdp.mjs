@@ -251,6 +251,20 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
   const changed=await evalPage("(()=>{const nav=document.querySelector('.demo-page-navigation');return {offset:Number(nav.dataset.pageOffset),chapter:Number(nav.dataset.chapter),count:Number(nav.dataset.pageCount),transform:document.querySelector('.demo-column-flow').style.transform};})()");
   if(changed.offset<1||changed.chapter!==0||!changed.transform.includes("translate3d(-"))
    throw Error("Book did not advance inside the same chapter: "+JSON.stringify(changed));
+  await send("Input.dispatchKeyEvent",{type:"keyDown",key:"ArrowLeft",code:"ArrowLeft",windowsVirtualKeyCode:37},sessionId);
+  await send("Input.dispatchKeyEvent",{type:"keyUp",key:"ArrowLeft",code:"ArrowLeft",windowsVirtualKeyCode:37},sessionId);
+  await waitFor("Number(document.querySelector('.demo-page-navigation')?.dataset.pageOffset)===0","keyboard previous page");
+  await send("Input.dispatchKeyEvent",{type:"keyDown",key:"ArrowRight",code:"ArrowRight",windowsVirtualKeyCode:39},sessionId);
+  await send("Input.dispatchKeyEvent",{type:"keyUp",key:"ArrowRight",code:"ArrowRight",windowsVirtualKeyCode:39},sessionId);
+  await waitFor("Number(document.querySelector('.demo-page-navigation')?.dataset.pageOffset)>0","keyboard next page");
+  await evalPage("document.querySelector('button[title*=书签]').click();true");
+  await waitFor("document.querySelector('button[title*=书签]')?.getAttribute('aria-pressed')==='true'","physical page bookmark");
+  const savedPage=await evalPage("Number(document.querySelector('.demo-page-navigation').dataset.pageOffset)");
+  await evalPage("(()=>{const b=[...document.querySelectorAll('.demo-menu-item')].find(x=>x.textContent.includes('我的书签'));b.click();return true;})()");
+  await waitFor("!!document.querySelector('.demo-bookmark-item')","bookmarks list");
+  await evalPage("document.querySelector('.demo-bookmark-item button').click();true");
+  await waitFor("Number(document.querySelector('.demo-page-navigation')?.dataset.pageOffset)==="+String(savedPage),"return to exact bookmarked page");
+
 
   console.log("PASS: offline demo import, annotation, bookmark, selection, refresh, night mode, touch/mouse freehand ink and persistence",width);
  }finally{await send("Target.closeTarget",{targetId}).catch(()=>{});}
