@@ -1,6 +1,9 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import {useEffect,useRef,useState,type ChangeEvent,type FormEvent,type PointerEvent} from "react";
+import {decodeTxt,prepareTxt} from "@/lib/v2/txt";
+import {prepareEpub} from "@/lib/v2/epub";
+import {preparePdf} from "@/lib/v2/pdf";
 
 type Chapter = {
   name: string;
@@ -19,6 +22,7 @@ type DemoBook = {
   color: string;
   initials: string;
   chapters: Chapter[];
+  imported?: boolean;
 };
 type DemoNote = {
   id: string;
@@ -27,9 +31,16 @@ type DemoNote = {
   quote: string;
   content: string;
   author: "我" | "共读伙伴";
+  replies?: {id:string;content:string}[];
 };
+type Stroke={id:string;bookId:string;chapterIndex:number;points:{x:number;y:number}[]};
+type Selection={quote:string;chapterIndex:number};
+const DEMO_STORAGE_KEY="reading-v2-offline-ui-demo-1";
+const MAX_DEMO_STATE=480000;
+const MAX_IMPORT_CHARS=120000;
+const MAX_IMPORTED_BOOKS=5;
 
-const books: DemoBook[] = [
+const seedBooks: DemoBook[] = [
   {
     id: "rain",
     title: "雨停之前",
@@ -188,7 +199,7 @@ const books: DemoBook[] = [
   }
 ];
 
-const initialNotes: DemoNote[] = books.flatMap(book =>
+const initialNotes: DemoNote[] = seedBooks.flatMap(book =>
   book.chapters.map((chapter, chapterIndex) => ({
     id: book.id + "-" + chapterIndex,
     bookId: book.id,
@@ -199,10 +210,19 @@ const initialNotes: DemoNote[] = books.flatMap(book =>
   }))
 );
 
-const kinds = ["全部", "小说", "随笔", "旅行"] as const;
+const kinds = ["全部", "小说", "随笔", "旅行", "我的导入"] as const;
 
 export function DemoLibrary() {
-  const [screen,setScreen] = useState<"library"|"reader"|"notes"|"settings">("library");
+  const [screen,setScreen] = useState<"library"|"reader"|"notes"|"bookmarks"|"settings">("library");
+  const [books,setBooks] = useState<DemoBook[]>(seedBooks);
+  const [progress,setProgress] = useState<Record<string,number>>({});
+  const [strokes,setStrokes] = useState<Stroke[]>([]);
+  const [drawing,setDrawing] = useState(false);
+  const [activeStroke,setActiveStroke] = useState<Stroke|null>(null);
+  const [selection,setSelection] = useState<Selection|null>(null);
+  const [replyDrafts,setReplyDrafts] = useState<Record<string,string>>({});
+  const [importing,setImporting] = useState(false);
+  const [localReady,setLocalReady] = useState(false);
   const [bookId,setBookId] = useState("rain");
   const [chapterIndex,setChapterIndex] = useState(0);
   const [kind,setKind] = useState<string>("全部");
@@ -218,6 +238,80 @@ export function DemoLibrary() {
   const [saved,setSaved] = useState<string[]>([]);
   const [notice,setNotice] = useState("");
   const noteSequence=useRef(0);
+  const fileRef=useRef<HTMLInputElement|null>(null);
+  const drawingRef=useRef<Stroke|null>(null);
+  useEffect(()=>{
+    const task=window.setTimeout(()=>{
+      try{
+        const stored=localStorage.getItem(DEMO_STORAGE_KEY);
+        if(stored&&stored.length<MAX_DEMO_STATE){
+          const parsed=JSON.parse(stored) as Record<string,unknown>;
+          if(parsed.version===1){
+            if(Array.isArray(parsed.importedBooks)){
+              const imported=(parsed.importedBooks as DemoBook[])
+                .filter(b=>b&&b.imported===true&&typeof b.id==="string"&&
+                  typeof b.title==="string"&&b.title.length<=80&&
+                  Array.isArray(b.chapters)&&b.chapters.length>0&&b.chapters.length<=80&&
+                  b.chapters.every(c=>typeof c.name==="string"&&Array.isArray(c.paragraphs)&&
+                    c.paragraphs.every(p=>typeof p==="string"&&p.length<=3100)));
+              setBooks([...seedBooks,...imported.slice(0,MAX_IMPORTED_BOOKS)]);
+            }
+            if(Array.isArray(parsed.notes)){
+              const mine=(parsed.notes as DemoNote[]).filter(n=>n&&
+                n.author==="我"&&typeof n.id==="string"&&typeof n.bookId==="string"&&
+                typeof n.quote==="string"&&n.quote.length<=160&&
+                typeof n.content==="string"&&n.content.length<=240&&
+                Number.isInteger(n.chapterIndex)&&n.chapterIndex>=0);
+              setNotes([...initialNotes,...mine.slice(0,500)]);
+            }
+            if(Array.isArray(parsed.saved))setSaved(parsed.saved.filter(
+              (x:unknown)=>typeof x==="string"&&x.length<=100).slice(0,300));
+            if(parsed.progress&&typeof parsed.progress==="object"&&!Array.isArray(parsed.progress)){
+              const p=parsed.progress as Record<string,unknown>;
+              setProgress(Object.fromEntries(Object.entries(p).filter(
+                ([key,val])=>key.length<=80&&Number.isInteger(val)&&Number(val)>=0&&Number(val)<=80
+              )) as Record<string,number>);
+            }
+            if(Array.isArray(parsed.strokes))setStrokes((parsed.strokes as Stroke[]).filter(
+              x=>x&&typeof x.id==="string"&&typeof x.bookId==="string"&&
+                Number.isInteger(x.chapterIndex)&&Array.isArray(x.points)&&x.points.length<=1200&&
+                x.points.every(p=>typeof p.x==="number"&&p.x>=0&&p.x<=1&&
+                  typeof p.y==="number"&&p.y>=0&&p.y<=1)
+            ).slice(0,500));
+            if(parsed.settings&&typeof parsed.settings==="object"){
+              const prefs=parsed.settings as Record<string,unknown>;
+              if(typeof prefs.night==="boolean")setNight(prefs.night);
+              if(Number.isInteger(prefs.fontSize)&&Number(prefs.fontSize)>=16&&Number(prefs.fontSize)<=24)
+                setFontSize(Number(prefs.fontSize));
+              if(typeof prefs.doublePage==="boolean")setDoublePage(prefs.doublePage);
+            }
+            if(typeof parsed.recentBook==="string")setBookId(parsed.recentBook);
+          }
+        }
+      }catch{/* Invalid local demo storage resets to bundled public-domain-style samples. */}
+      setLocalReady(true);
+    },0);
+    return()=>window.clearTimeout(task);
+  },[]);
+  useEffect(()=>{
+    if(!localReady)return;
+    const timeout=window.setTimeout(()=>{
+      try{
+        const snapshot={
+          version:1,
+          importedBooks:books.filter(b=>b.imported),
+          notes:notes.filter(n=>n.author==="我"),
+          saved,progress,strokes,settings:{night,fontSize,doublePage},
+          recentBook:bookId,
+        };
+        const serialized=JSON.stringify(snapshot);
+        if(serialized.length>MAX_DEMO_STATE)
+          throw Error("本地存储空间不足；请减少导入数量或备份后重置。");
+        localStorage.setItem(DEMO_STORAGE_KEY,serialized);
+      }catch{setNotice("本地保存失败：可能已达到浏览器容量限制。请先导出备份。");}
+    },320);
+    return()=>window.clearTimeout(timeout);
+  },[localReady,books,notes,saved,progress,strokes,night,fontSize,doublePage,bookId]);
 
   const book=books.find(item=>item.id===bookId)??books[0];
   const chapter=book.chapters[chapterIndex];
@@ -230,18 +324,27 @@ export function DemoLibrary() {
     (item.title+item.subtitle+item.author).toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())
   );
   const percent=Math.round((chapterIndex+1)/book.chapters.length*100);
+  const allBookmarks=saved.flatMap(key=>{
+    const last=key.lastIndexOf(":");
+    const found=books.find(item=>item.id===key.slice(0,last));
+    const index=Number(key.slice(last+1));
+    return found&&Number.isInteger(index)&&index>=0&&index<found.chapters.length
+      ? [{key,book:found,chapterIndex:index}]:[];
+  });
 
-  function navigate(next:"library"|"reader"|"notes"|"settings"){
+  function navigate(next:"library"|"reader"|"notes"|"bookmarks"|"settings"){
     setScreen(next);setNotice("");
     if(next==="reader")setTocVisible(false);
   }
   function openBook(id:string){
-    setBookId(id);setChapterIndex(0);setScreen("reader");
+    setBookId(id);setChapterIndex(Math.min(progress[id]??0,(books.find(x=>x.id===id)?.chapters.length??1)-1));setScreen("reader");
     setTocVisible(false);setOpenNoteId(null);setNoteDraft("");setNotesVisible(true);setNotice("");
   }
   function goChapter(index:number){
     if(index<0||index>=book.chapters.length)return;
-    setChapterIndex(index);setOpenNoteId(null);setTocVisible(false);setNoteDraft("");setNotice("");
+    setChapterIndex(index);setProgress(p=>({...p,[book.id]:index}));
+    setOpenNoteId(null);setSelection(null);setDrawing(false);
+    setTocVisible(false);setNoteDraft("");setNotice("");
   }
   function toggleBookmark(){
     setSaved(current=>current.includes(saveKey)?current.filter(k=>k!==saveKey):[...current,saveKey]);
