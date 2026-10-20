@@ -5,6 +5,7 @@ import type { Session } from "@supabase/supabase-js";
 import { getV2StagingClient, v2StagingConfigured } from "@/lib/v2/staging";
 import { V2ProtectedBook } from "./V2ProtectedBook";
 import { V2Discovery } from "./V2Discovery";
+import { V2RoomLifecycle } from "./V2RoomLifecycle";
 import {authEventView,recoveryReturnUrl,validNewPassword,type AuthView} from "@/lib/v2/authSafety";
 
 type RoomRow = {
@@ -787,6 +788,8 @@ export function V2Preview() {
           })}
         </div>
       </section>
+      <V2RoomLifecycle key={"lifecycle:"+session.user.id} client={client}
+        userId={session.user.id} onRoomsChanged={()=>{void loadRooms();}} />
       <V2Discovery key={session.user.id} client={client}
         userId={session.user.id} rooms={rooms}
         onRoomsChanged={()=>{void loadRooms();}} />
