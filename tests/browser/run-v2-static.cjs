@@ -25,7 +25,9 @@ const injected=`<script>(() => {
  const started=Date.now();
  const report=()=>{
   if(done)return;
-  const title=document.querySelector("h2")?.textContent||"";
+  const title=[...document.querySelectorAll("h2")]
+    .map(node=>node.textContent||"")
+    .find(title=>title.includes("V2 预览默认关闭"))||"";
   const realForm=document.querySelector("input[type=password]");
   const emailForm=document.querySelector("input[type=email]");
   const viewport=document.querySelector("meta[name=viewport]");
