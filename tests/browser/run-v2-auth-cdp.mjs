@@ -239,6 +239,7 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
   await evalPage("(()=>{const text=('这是用于分页回归的原创测试文字。它需要在固定纸面内连续换行，下一页必须保留全部内容，而不能让阅读者一直向下滚动。\\n\\n').repeat(85);const input=document.querySelector('.demo-file-input');const dt=new DataTransfer();dt.items.add(new File([text],'长文本翻页测试.txt',{type:'text/plain'}));input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));return true;})()");
   await waitFor("document.querySelector('.demo-reader-back h1')?.textContent==='长文本翻页测试'","long TXT book import");
   await waitFor("(()=>{const flow=document.querySelector('.demo-column-flow');const label=document.querySelector('.demo-progress-label');return flow&&flow.clientWidth>0&&flow.scrollWidth>flow.clientWidth*1.7&&label?.textContent.includes('页');})()","actual multi-column book pagination");
+  await waitFor("Number(document.querySelector('.demo-page-navigation')?.dataset.pageCount)>=3","fully measured multi-page column count");
   const oldLabel=await evalPage("document.querySelector('.demo-progress-label').textContent");
   const beforeLayout=await evalPage("(()=>{const page=document.querySelector('.demo-physical-page');const flow=document.querySelector('.demo-column-flow');return {pageHeight:page.clientHeight,textHeight:flow.clientHeight,paperOverflow:getComputedStyle(page).overflow,desktopOverflow:getComputedStyle(document.querySelector('.demo-outer')).overflowY};})()");
   if(beforeLayout.textHeight>beforeLayout.pageHeight||beforeLayout.paperOverflow!=="hidden")
@@ -247,8 +248,9 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
    throw Error("Desktop reader still uses vertical scrolling: "+JSON.stringify(beforeLayout));
   await evalPage("document.querySelector('.demo-page-navigation button:last-child').click();true");
   await waitFor("document.querySelector('.demo-progress-label')?.textContent!=="+JSON.stringify(oldLabel),"physical page advance without chapter jump");
-  const changed=await evalPage("document.querySelector('.demo-column-flow').style.transform");
-  if(!changed.includes("translate3d(-"))throw Error("Book did not advance to a new column");
+  const changed=await evalPage("(()=>{const nav=document.querySelector('.demo-page-navigation');return {offset:Number(nav.dataset.pageOffset),chapter:Number(nav.dataset.chapter),count:Number(nav.dataset.pageCount),transform:document.querySelector('.demo-column-flow').style.transform};})()");
+  if(changed.offset<1||changed.chapter!==0||!changed.transform.includes("translate3d(-"))
+   throw Error("Book did not advance inside the same chapter: "+JSON.stringify(changed));
 
   console.log("PASS: offline demo import, annotation, bookmark, selection, refresh, night mode, touch/mouse freehand ink and persistence",width);
  }finally{await send("Target.closeTarget",{targetId}).catch(()=>{});}
