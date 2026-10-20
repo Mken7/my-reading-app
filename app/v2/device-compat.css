@@ -1,0 +1,38 @@
+/* Module 14: minimum pointer sizing / focus visibility on the V2 test app.
+ * Scoped to V2 so the published legacy reading app stays unchanged. */
+.v2-preview-shell button,
+.v2-preview-shell input:not([type="checkbox"]):not([type="radio"]),
+.v2-preview-shell select {
+  min-height: 44px;
+}
+.v2-preview-shell button,
+.v2-preview-shell input,
+.v2-preview-shell select,
+.v2-preview-shell textarea,
+.v2-preview-shell summary {
+  touch-action: manipulation;
+}
+.v2-preview-shell :is(button,input,select,textarea,summary,a):focus-visible {
+  outline: 3px solid #315b94;
+  outline-offset: 3px;
+}
+.v2-preview-shell :is(input,textarea,select) {
+  max-width: 100%;
+}
+@media (max-width: 767px) {
+  /* iOS Safari zooms on editable fields smaller than 16px. */
+  .v2-preview-shell input:not([type="checkbox"]):not([type="radio"]),
+  .v2-preview-shell select,
+  .v2-preview-shell textarea {
+    font-size: 16px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .v2-preview-shell *,
+  .v2-preview-shell *::before,
+  .v2-preview-shell *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
