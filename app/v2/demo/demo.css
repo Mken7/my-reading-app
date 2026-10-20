@@ -427,3 +427,42 @@
   .demo-paper-page {touch-action:pan-y;}
   .demo-ink-layer.demo-ink-active {touch-action:none;}
 }
+
+
+/* Physical book pagination: the browser flows text across horizontal CSS
+ * columns sized to the measured paper. Only the current one/two columns are
+ * visible. Reading is controlled by page arrows, not the document scrollbar. */
+.demo-physical-page {height:clamp(390px,68dvh,730px);min-height:0;overflow:hidden;}
+.demo-flow-viewport {flex:1;min-height:0;width:100%;overflow:hidden;position:relative;}
+.demo-column-flow {height:100%;width:100%;column-count:1;column-gap:0;column-fill:auto;
+  overflow:visible;will-change:transform;}
+.demo-column-flow .demo-chapter-ornament {margin-top:4px;}
+.demo-column-flow .demo-prose {line-height:1.85;letter-spacing:.035em;}
+.demo-column-flow .demo-prose p {break-inside:auto;}
+.demo-physical-page .demo-paper-footer {flex:0 0 auto;margin-top:0;padding-top:12px;}
+.demo-blank-facing-page {background:var(--demo-card);border:1px solid var(--demo-line);}
+.demo-reader-back h1 {max-width:clamp(180px,32vw,550px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.demo-page-navigation {flex:0 0 auto;}
+.demo-reader-progress {width:min(47%,330px);max-width:330px;}
+@media (min-width:1000px) {
+  .demo-outer:has(.demo-reader) {overflow-y:hidden;}
+  .demo-app:has(.demo-reader) {height:calc(100dvh - 38px);min-height:0;overflow:hidden;}
+  .demo-workspace:has(.demo-reader) {height:100%;min-height:0;overflow:hidden;}
+  .demo-reader {display:flex;flex-direction:column;min-height:0;padding-bottom:10px;}
+  .demo-reader-toolbar {flex:0 0 auto;padding-top:13px;padding-bottom:13px;}
+  .demo-reading-layout {flex:1;min-height:0;align-items:stretch;}
+  .demo-book-column {display:flex;flex-direction:column;min-height:0;}
+  .demo-pages {flex:1;min-height:0;}
+  .demo-physical-page {height:100%;min-height:0;padding-top:22px;padding-bottom:15px;}
+  .demo-annotation-aside {min-height:0;max-height:100%;overflow-y:auto;overscroll-behavior:contain;}
+  .demo-page-navigation {padding:10px 4px;}
+  .demo-global-footer {display:none;}
+}
+@media (max-width:999px) {
+  .demo-physical-page {height:clamp(370px,65dvh,700px);min-height:0;}
+}
+@media (max-width:650px) {
+  .demo-physical-page {height:clamp(340px,63dvh,600px);min-height:0;}
+  .demo-reader-back h1 {max-width:210px;}
+  .demo-reader-progress {width:50%;}
+}
