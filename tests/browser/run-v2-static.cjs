@@ -16,6 +16,11 @@ const chrome=["google-chrome","google-chrome-stable","chromium","chromium-browse
 if(!chrome){console.error("A real Chromium browser is required");process.exit(1);}
 
 const injected=`<script>(() => {
+ const browserErrors=[];
+ window.addEventListener("error",e=>{browserErrors.push(String(e.message).slice(0,120));});
+ window.addEventListener("unhandledrejection",e=>{
+  browserErrors.push(String(e.reason?.message??e.reason).slice(0,120));
+ });
  let done=false;
  const report=()=>{
   if(done)return;done=true;
@@ -49,7 +54,8 @@ const injected=`<script>(() => {
     unlabeledInputs:unlabeled.filter(x=>x.matches("input")).length,
     undersizedFields:undersizedFields.length,keyboardFocusOutline,authFetch,
     heading:title,bodyText:document.body.innerText.slice(0,200),
-    javascriptFiles:performance.getEntriesByType("resource").filter(x=>x.name.includes("/_next/")).length});
+    javascriptFiles:performance.getEntriesByType("resource").filter(x=>x.name.includes("/_next/")).length,
+    browserErrors:browserErrors.slice(0,5)});
   document.body.appendChild(result);
  };
  window.setTimeout(report,2500);
@@ -65,7 +71,7 @@ const server=http.createServer((req,res)=>{
   if(error){res.writeHead(404).end("Missing");return;}
   const ext=path.extname(filename);
   if(ext===".html"){
-   const html=buf.toString("utf8").replace("</body>",injected+"</body>");
+   const html=buf.toString("utf8").replace("</head>",injected+"</head>");
    res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"});
    res.end(html);return;
   }
