@@ -5,6 +5,7 @@ const path=require("node:path");
 const {spawn,spawnSync}=require("node:child_process");
 
 const out=path.resolve(__dirname,"../../out");
+const enabled=process.argv.includes("--enabled");
 if(!fs.existsSync(path.join(out,"v2","index.html"))){
  console.error("Expected a completed GitHub Pages static export in out/v2/index.html");
  process.exit(1);
@@ -19,18 +20,29 @@ const injected=`<script>(() => {
   if(done)return;done=true;
   const title=document.querySelector("h2")?.textContent||"";
   const realForm=document.querySelector("input[type=password]");
+  const emailForm=document.querySelector("input[type=email]");
+  const viewport=document.querySelector("meta[name=viewport]");
+  const controls=[...document.querySelectorAll("button,input")];
+  const unlabeled=controls.filter(node=>!node.getAttribute("aria-label")&&
+    !node.closest("label")&&!node.getAttribute("aria-labelledby")&&
+    !node.textContent?.trim()&&!node.getAttribute("type")?.includes("submit"));
   const authFetch=performance.getEntriesByType("resource").some(item=>
    /\\.supabase\\.co\\/(?:rest|auth|realtime)\\//.test(item.name));
   const overflowing=document.documentElement.scrollWidth>innerWidth+4;
-  const ok=title.includes("V2 预览默认关闭")&&!realForm&&!authFetch&&!overflowing;
+  const active=${enabled};
+  const ok=active
+    ? Boolean(emailForm&&realForm&&!overflowing&&viewport&&
+      document.querySelector("form")&&!document.querySelector("input[type=hidden][name=service_role]"))
+    : title.includes("V2 预览默认关闭")&&!realForm&&!authFetch&&!overflowing;
   const result=document.createElement("div");
   result.id="v2-static-test-result";
   result.textContent=(ok?"V2_STATIC_PASS:":"V2_STATIC_FAIL:")+
    JSON.stringify({width:innerWidth,overflowing,disabled:!!title.includes("默认关闭"),
-    exposedAuthForm:!!realForm,authFetch});
+    exposedAuthForm:!!realForm,hasEmail:!!emailForm,viewport:!!viewport,
+    unlabeledInputs:unlabeled.filter(x=>x.matches("input")).length,authFetch});
   document.body.appendChild(result);
  };
- window.setTimeout(report,1900);
+ window.setTimeout(report,2500);
 })()</script>`;
 
 const server=http.createServer((req,res)=>{
@@ -60,7 +72,7 @@ async function check(port,width){
   const browser=spawn(chrome,[
    "--headless=new","--no-sandbox","--disable-gpu","--disable-extensions",
    "--disable-dev-shm-usage","--no-first-run",
-   "--window-size="+width+",860","--virtual-time-budget=5000",
+   "--window-size="+width+",860","--virtual-time-budget=7000",
    "--dump-dom",url,
   ],{stdio:["ignore","pipe","pipe"]});
   let stdout="",stderr="";
@@ -81,9 +93,9 @@ server.listen(0,"127.0.0.1",async()=>{
  const addr=server.address();
  if(!addr||typeof addr==="string")throw Error("No listen port");
  try{
-  for(const w of [520,768,1280]){
+  for(const w of [390,520,768,1280]){
    const result=await check(addr.port,w);
-   console.log("PASS: static V2 preview remains locked at browser width",w,result);
+   console.log("PASS: static V2 preview "+(enabled?"opt-in login":"default-off")+" at width",w,result);
   }
  }catch(error){process.exitCode=1;console.error(error);}
  finally{server.close();}
