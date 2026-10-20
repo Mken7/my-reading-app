@@ -62,7 +62,6 @@ const makeEvent=async(c,room,author,body,visibility)=>{
 };
 const sessions=[];
 let room=null;
-let joined=false;
 let checkpoint="START";
 let realtimeChannel;
 const originalConsoleError=console.error; // Logs must never expose secrets.
@@ -108,7 +107,6 @@ try{
  must(await rpc(owner,"v2_review_room_join",{
   target_room:room,requester:sessions[1],approve:true,
  })===true,"Owner approval failed");
- joined=true;
  const roster=await rpc(partner,"v2_room_roster",{target_room:room});
  must(roster.length===2,"Room did not reach exactly two members");
  must((await rpc(outsider,"v2_room_roster",{target_room:room})).length===0,
