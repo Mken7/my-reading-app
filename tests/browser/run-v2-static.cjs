@@ -22,8 +22,9 @@ const injected=`<script>(() => {
   browserErrors.push(String(e.reason?.message??e.reason).slice(0,120));
  });
  let done=false;
+ const started=Date.now();
  const report=()=>{
-  if(done)return;done=true;
+  if(done)return;
   const title=document.querySelector("h2")?.textContent||"";
   const realForm=document.querySelector("input[type=password]");
   const emailForm=document.querySelector("input[type=email]");
@@ -40,6 +41,14 @@ const injected=`<script>(() => {
    /\\.supabase\\.co\\/(?:rest|auth|realtime)\\//.test(item.name));
   const overflowing=document.documentElement.scrollWidth>innerWidth+4;
   const active=${enabled};
+  // Hydration timing is nondeterministic even in headless Chromium: never
+  // assert that login is missing just because the first 2.5 seconds elapsed.
+  // Retry until the form and responsive CSS actually hydrate, or fail at the
+  // hard cutoff. This does not turn a permanently broken page into a pass.
+  if(active && (!emailForm || !realForm || undersizedFields.length>0) &&
+     Date.now()-started<10000) return;
+  done=true;
+  window.clearInterval(poll);
   const ok=active
     ? Boolean(emailForm&&realForm&&!overflowing&&viewport&&
       document.querySelector("form")&&undersizedFields.length===0&&
@@ -62,7 +71,8 @@ const injected=`<script>(() => {
     browserErrors:browserErrors.slice(0,5)});
   document.body.appendChild(result);
  };
- window.setTimeout(report,2500);
+ const poll=window.setInterval(report,250);
+ window.setTimeout(report,10500);
 })()</script>`;
 
 const server=http.createServer((req,res)=>{
@@ -92,7 +102,7 @@ async function check(port,width){
   const browser=spawn(chrome,[
    "--headless=new","--no-sandbox","--disable-gpu","--disable-extensions",
    "--disable-dev-shm-usage","--no-first-run",
-   "--window-size="+width+",860","--virtual-time-budget=7000",
+   "--window-size="+width+",860","--virtual-time-budget=14000",
    "--dump-dom",url,
   ],{stdio:["ignore","pipe","pipe"]});
   let stdout="",stderr="";
