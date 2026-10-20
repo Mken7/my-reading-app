@@ -505,23 +505,43 @@ export function DemoLibrary() {
         <div className="demo-chapter-ornament">✧</div>
         <div className="demo-chapter-kicker">{section.kicker}</div>
         <h2 className="demo-chapter-name">{section.name}</h2>
-        <div className="demo-prose" style={{fontSize:fontSize+"px"}}>
+        <div className="demo-prose" style={{fontSize:fontSize+"px"}}
+          onMouseUp={e=>captureSelection(index,e.currentTarget)}
+          onTouchEnd={e=>captureSelection(index,e.currentTarget)}>
           {section.paragraphs.map((paragraph,i)=>{
-            const start=paragraph.indexOf(section.marked);
+            const personal=markings.find(m=>m.bookId===book.id&&m.chapterIndex===index&&
+              paragraph.includes(m.quote));
+            const match=personal?.quote||(section.marked&&paragraph.includes(section.marked)
+              ?section.marked:"");
+            const start=match?paragraph.indexOf(match):-1;
             if(start<0)return <p key={i}>{paragraph}</p>;
             return <p key={i}>
               {paragraph.slice(0,start)}
               <button type="button" className="demo-quoted-mark"
-                aria-label={"查看共读伙伴对这句话的批注："+section.marked}
+                aria-label={"查看这段划线与批注："+match}
                 onClick={()=>{
-                  setOpenNoteId(linkedNote?.id??null);
+                  const matched=notes.find(n=>n.bookId===book.id&&
+                    n.chapterIndex===index&&n.quote===match);
+                  setOpenNoteId(matched?.id??linkedNote?.id??null);
                   setNotesVisible(true);
-                  setNotice("你点开了一处演示划线。右侧可以查看共读伙伴的想法。");
-                }}>{section.marked}</button>
-              {paragraph.slice(start+section.marked.length)}
+                  setNotice("点击划线可查看页边批注；也可以选中文字创建自己的划线。");
+                }}>{match}</button>
+              {paragraph.slice(start+match.length)}
             </p>;
           })}
         </div>
+        <svg className={"demo-ink-layer"+(drawing?" demo-ink-active":"")}
+          viewBox="0 0 100 100" preserveAspectRatio="none"
+          role="img" aria-label="本地演示手写标记层"
+          onPointerDown={e=>startStroke(e,index)}
+          onPointerMove={moveStroke} onPointerUp={endStroke} onPointerCancel={endStroke}>
+          {[...strokes.filter(t=>t.bookId===book.id&&t.chapterIndex===index),
+            ...(activeStroke?.bookId===book.id&&activeStroke.chapterIndex===index?[activeStroke]:[])].map(t=>
+            <polyline key={t.id} fill="none" stroke="#ac6550" strokeWidth=".65"
+              strokeLinecap="round" strokeLinejoin="round"
+              points={t.points.map(p=>(p.x*100)+","+(p.y*100)).join(" ")}/>
+          )}
+        </svg>
         <div className="demo-paper-footer">
           <span>SHARED READING ROOM</span>
           <span>{String(index+1).padStart(2,"0")} / {String(book.chapters.length).padStart(2,"0")}</span>
@@ -568,6 +588,7 @@ export function DemoLibrary() {
             ["library","▦","我的书架"],
             ["reader","▤","正在阅读"],
             ["notes","✎","共读批注"],
+            ["bookmarks","◇","我的书签"],
             ["settings","⚙","阅读设置"]
           ] as const).map(([id,glyph,label])=>
             <button type="button" key={id} aria-current={screen===id?"page":undefined}
@@ -590,7 +611,7 @@ export function DemoLibrary() {
         <header className="demo-topbar">
           <div className="demo-topbar-crumb">
             <span>PRIVATE LIBRARY</span><span aria-hidden="true">/</span>
-            <strong>{screen==="library"?"我的书架":screen==="reader"?book.title:screen==="notes"?"共读批注":"阅读设置"}</strong>
+            <strong>{screen==="library"?"我的书架":screen==="reader"?book.title:screen==="notes"?"共读批注":screen==="bookmarks"?"我的书签":"阅读设置"}</strong>
           </div>
           <div className="demo-topbar-right">
             <span className="demo-local-chip"><span className="demo-local-dot"/>本地演示</span>
@@ -620,6 +641,14 @@ export function DemoLibrary() {
             <div className="demo-section-top">
               <div><span className="demo-section-overline">BOOK COLLECTION</span><h2>我们的书架 <sup>{books.length.toString().padStart(2,"0")}</sup></h2></div>
               <div className="demo-collection-tools">
+                <input ref={fileRef} type="file" accept=".txt,.epub,.pdf" className="demo-file-input"
+                  aria-label="从电脑本地导入 TXT EPUB 或 PDF 书籍"
+                  onChange={e=>{void importFile(e);}}/>
+                <button className="demo-import-button" type="button"
+                  disabled={importing||books.filter(b=>b.imported).length>=MAX_IMPORTED_BOOKS}
+                  onClick={()=>fileRef.current?.click()}>
+                  {importing?"正在解析…":"＋ 导入本地书籍"}
+                </button>
                 <label className="demo-search"><span aria-hidden="true">⌕</span>
                   <input aria-label="搜索演示书籍" type="search" value={search}
                     onChange={e=>setSearch(e.target.value)} placeholder="搜索书名或作者"/>
@@ -632,7 +661,8 @@ export function DemoLibrary() {
                 onClick={()=>setKind(k)}>{k}</button>)}
             </div>
             <div className="demo-book-grid">
-              {results.map(item=><button key={item.id} type="button" className="demo-book-card"
+              {results.map(item=><div key={item.id} className="demo-book-entry">
+                <button type="button" className="demo-book-card"
                 onClick={()=>openBook(item.id)}>
                 <div className={"demo-book-cover demo-cover-"+item.color}>
                   <div className="demo-cover-top">S. · EDITION</div>
@@ -646,11 +676,14 @@ export function DemoLibrary() {
                   <p>{item.subtitle}</p>
                   <div className="demo-card-bottom"><span>查看并阅读</span><span className="demo-card-arrow">↗</span></div>
                 </div>
-              </button>)}
+                </button>
+                {item.imported&&<button type="button" className="demo-delete-book"
+                  onClick={()=>deleteLocalBook(item.id)}>删除本地书籍</button>}
+              </div>)}
               {results.length===0&&<p className="demo-empty-search">没有符合条件的演示书籍。试试其他关键词。</p>}
             </div>
             <div className="demo-bottom-tip"><span>✦</span>
-              书名、正文、伙伴在线状态都是原创模拟内容。这里不会连接数据库或访问你的真实书籍。
+              演示书籍与伙伴在线状态为模拟内容。你导入的文字与操作仅在本地浏览器，不会连接数据库；公共设备上请删除本地数据。
             </div>
           </main>
         )}
@@ -670,6 +703,9 @@ export function DemoLibrary() {
                   onClick={()=>setTocVisible(x=>!x)}>☷ <span>目录</span></button>
                 <button type="button" className="demo-icon-action" aria-pressed={notesVisible}
                   onClick={()=>setNotesVisible(x=>!x)}>✎ <span>批注</span></button>
+                <button type="button" className={"demo-icon-action"+(drawing?" demo-icon-selected":"")}
+                  aria-pressed={drawing} onClick={()=>{endStroke();setDrawing(x=>!x);}}>
+                  ✎ <span>{drawing?"结束手绘":"自由手绘"}</span></button>
                 <button type="button" className="demo-icon-action" onClick={()=>navigate("settings")}>⚙ <span>设置</span></button>
               </div>
             </div>
@@ -682,6 +718,18 @@ export function DemoLibrary() {
               </button>)}
             </div>}
 
+            {selection?.chapterIndex===chapterIndex&&!drawing&&<div className="demo-selection-toolbar"
+              role="status"><span>已选「{selection.quote.slice(0,36)}{selection.quote.length>36?"…":""}」</span>
+              <button type="button" onClick={markSelection}>划线保存</button>
+              <button type="button" onClick={()=>{setNotesVisible(true);
+                document.getElementById("demo-new-note")?.focus();}}>写批注</button>
+              <button type="button" onClick={()=>setSelection(null)}>取消</button></div>}
+            {drawing&&<div className="demo-drawing-help">
+              手绘模式：用鼠标或手指在纸面上画线。
+              <button type="button" onClick={()=>setStrokes(old=>old.filter(t=>
+                !(t.bookId===book.id&&t.chapterIndex===chapterIndex)))}>清除当前页笔迹</button>
+              <button type="button" onClick={()=>setDrawing(false)}>完成</button>
+            </div>}
             <div className="demo-reading-layout">
               <div className="demo-book-column">
                 <div className={"demo-pages"+(doublePage?" demo-pages-spread":"")}>
@@ -715,7 +763,7 @@ export function DemoLibrary() {
                     <button type="submit" disabled={noteDraft.trim().length<2}>添加批注 ↗</button>
                   </div>
                 </form>
-                <p className="demo-aside-warning">仅为模拟互动，刷新页面后不保留。</p>
+                <p className="demo-aside-warning">纯本地演示：批注与书签可在此浏览器刷新后恢复，不会同步给伙伴。</p>
               </aside>}
             </div>
           </main>
@@ -724,9 +772,9 @@ export function DemoLibrary() {
         {screen==="notes"&&<main className="demo-content demo-narrow-content">
           <span className="demo-section-overline">THOUGHTS & HIGHLIGHTS</span>
           <h1 className="demo-page-title">那些想留下的句子。</h1>
-          <p className="demo-page-description">一段文字，两种读法。这里展示刚刚那本书的演示批注和你在本次访问中添加的想法。</p>
+          <p className="demo-page-description">一段文字，两种读法。批注和回复保存于本机，不会发送给别人。</p>
           <label className="demo-book-pick">选择演示书籍
-            <select value={bookId} onChange={e=>setBookId(e.target.value)}>
+            <select value={bookId} onChange={e=>{setBookId(e.target.value);setChapterIndex(0);}}>
               {books.map(item=><option value={item.id} key={item.id}>{item.title}</option>)}
             </select>
           </label>
@@ -742,6 +790,20 @@ export function DemoLibrary() {
           </div>
         </main>}
 
+        {screen==="bookmarks"&&<main className="demo-content demo-narrow-content">
+          <span className="demo-section-overline">YOUR SAVED PLACES</span>
+          <h1 className="demo-page-title">收藏过的阅读位置。</h1>
+          <p className="demo-page-description">你收藏的页面都在这里，刷新后仍然保留在当前浏览器中。</p>
+          <div className="demo-bookmark-list">
+            {allBookmarks.map(entry=><div key={entry.key} className="demo-bookmark-item">
+              <span>{entry.book.title} · {entry.book.chapters[entry.chapterIndex].name}</span>
+              <button type="button" onClick={()=>{setBookId(entry.book.id);
+                setChapterIndex(entry.chapterIndex);setScreen("reader");}}>前往阅读 →</button>
+              <button type="button" onClick={()=>setSaved(old=>old.filter(k=>k!==entry.key))}>移除</button>
+            </div>)}
+            {allBookmarks.length===0&&<p>你还没有添加书签。打开一本书，点击右上角的书签按钮。</p>}
+          </div>
+        </main>}
         {screen==="settings"&&<main className="demo-content demo-narrow-content">
           <span className="demo-section-overline">MAKE IT YOURS</span>
           <h1 className="demo-page-title">给阅读一点自己的节奏。</h1>
@@ -765,12 +827,20 @@ export function DemoLibrary() {
                 role="switch" aria-checked={doublePage} aria-label="桌面双页模式"
                 onClick={()=>setDoublePage(x=>!x)}><span/></button>
             </div>
-            <div className="demo-settings-row"><div><h2>恢复演示</h2><p>清除本次访问临时添加的批注、书签及偏好。</p></div>
+            <div className="demo-settings-row"><div><h2>导出本地备份</h2>
+              <p>把书签、导入文字、批注和设置保存为明文 JSON。请勿在公用设备存储敏感文字。</p></div>
+              <button type="button" className="demo-reset-button" onClick={saveExport}>下载 JSON 备份</button>
+            </div>
+            <div className="demo-settings-row"><div><h2>恢复演示</h2><p>删除这个浏览器里所有演示数据（不可撤销）。</p></div>
               <button type="button" className="demo-reset-button" onClick={()=>{
+                if(!window.confirm("确定删除本地导入书籍、划线、手绘、批注和书签？无法恢复。"))return;
+                localStorage.removeItem(DEMO_STORAGE_KEY);
+                setBooks(seedBooks);setBookId("rain");setChapterIndex(0);
                 setNight(false);setFontSize(19);setDoublePage(true);setSaved([]);
+                setProgress({});setStrokes([]);setMarkings([]);setSelection(null);
                 setNotes(initialNotes);setNoteDraft("");setOpenNoteId(null);
-                setNotice("演示已恢复初始状态。");
-              }}>重置演示数据</button>
+                setNotice("已清除本地数据并恢复初始演示。");
+              }}>清除本地数据</button>
             </div>
           </section>
           <button type="button" className="demo-return-to-book" onClick={()=>navigate("reader")}>← 返回阅读界面</button>
@@ -779,7 +849,7 @@ export function DemoLibrary() {
         {notice&&<div className="demo-notice" role="status">
           <span>{notice}</span><button type="button" onClick={()=>setNotice("")} aria-label="关闭提示">×</button>
         </div>}
-        <footer className="demo-global-footer"><span>© SHARED LIBRARY · DESIGN PREVIEW</span><span>模拟内容 · 无需登录 · 不保存数据</span></footer>
+        <footer className="demo-global-footer"><span>© SHARED LIBRARY · DESIGN PREVIEW</span><span>免登录 · 仅本机保存 · 无云端同步</span></footer>
       </div>
     </div>
   );
