@@ -141,8 +141,15 @@ async function inspectDemo(send,url,width,height,mobile){
 
   await evaluate("document.querySelector('.demo-book-card')?.click();true");
   await waitFor("document.querySelector('.demo-chapter-name')?.textContent==='雨落下来'","open book");
+  const beforePage=await evaluate("document.querySelector('.demo-progress-label')?.textContent");
   await evaluate("document.querySelector('.demo-page-navigation button:last-child')?.click();true");
-  await waitFor("document.querySelector('.demo-chapter-name')?.textContent==='旧书房'","turn page");
+  await waitFor("document.querySelector('.demo-progress-label')?.textContent!=="+JSON.stringify(beforePage) ,"turn physical page");
+  for(let i=0;i<14;i++){
+    if(await evaluate("document.querySelector('.demo-chapter-name')?.textContent==='旧书房'"))break;
+    await evaluate("document.querySelector('.demo-page-navigation button:last-child')?.click();true");
+    await delay(120);
+  }
+  await waitFor("document.querySelector('.demo-chapter-name')?.textContent==='旧书房'","advance to next chapter");
   await evaluate("document.querySelector('.demo-quoted-mark')?.click();true");
   await waitFor("!!document.querySelector('.demo-note-selected')","show linked note");
   await evaluate("Array.from(document.querySelectorAll('.demo-menu-item')).find(el=>el.textContent.includes('阅读设置'))?.click();true");
