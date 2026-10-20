@@ -857,7 +857,7 @@ export function DemoLibrary() {
                         :<div className="demo-blank-facing-page" aria-label="本书最后一页"/>
                   )}
                 </div>
-                <div className="demo-page-navigation">
+                <div className="demo-page-navigation" data-page-count={pageCount} data-page-offset={pageOffset} data-chapter={safeChapterIndex}>
                   <button type="button" disabled={safeChapterIndex===0&&pageOffset===0}
                     aria-label="上一页" onClick={()=>turnPage(-1)}>‹ <span>上一页</span></button>
                   <div className="demo-reader-progress">
