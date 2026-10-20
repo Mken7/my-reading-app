@@ -262,7 +262,7 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
   const savedPage=await evalPage("Number(document.querySelector('.demo-page-navigation').dataset.pageOffset)");
   await evalPage("(()=>{const b=[...document.querySelectorAll('.demo-menu-item')].find(x=>x.textContent.includes('我的书签'));b.click();return true;})()");
   await waitFor("!!document.querySelector('.demo-bookmark-item')","bookmarks list");
-  await evalPage("document.querySelector('.demo-bookmark-item button').click();true");
+  await evalPage("(()=>{const item=[...document.querySelectorAll('.demo-bookmark-item')].find(x=>x.textContent.includes('长文本翻页测试'));if(!item)return false;item.querySelector('button').click();return true;})()");
   await waitFor("Number(document.querySelector('.demo-page-navigation')?.dataset.pageOffset)==="+String(savedPage),"return to exact bookmarked page");
 
 
