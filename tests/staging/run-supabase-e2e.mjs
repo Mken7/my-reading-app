@@ -226,13 +226,19 @@ try{
   console.error("Attempting consent-gated cleanup of disposable room:",room);
   try {
    const [owner,partner]=clients;
+   // The applicant is authenticated before room creation but may never have
+   // been approved if the test failed early. Only actual members must consent.
+   const rosterCheck=await owner.rpc("v2_room_roster",{target_room:room});
+   const partnerWasMember=!rosterCheck.error&&
+     Array.isArray(rosterCheck.data)&&
+     rosterCheck.data.some(entry=>entry.user_id===sessions[1]);
    const close=await owner.rpc("v2_change_room_state",{
     target_room:room,target_state:"closed",
    });
    if(close.error||close.data!==true)throw Error("owner close not confirmed");
    const first=await owner.rpc("v2_consent_room_purge",{target_room:room});
    if(first.error||first.data!=="consented")throw Error("owner consent not confirmed");
-   if(sessions.length>1){
+   if(partnerWasMember){
     const second=await partner.rpc("v2_consent_room_purge",{target_room:room});
     if(second.error||second.data!=="consented")throw Error("partner consent not confirmed");
    }
