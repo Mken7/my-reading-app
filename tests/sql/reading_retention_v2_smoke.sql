@@ -83,6 +83,7 @@ BEGIN
 END $partner_export$;
 -- Partner replies to owner's shared note; this belongs to the partner even
 -- after owner erases the text/hidden parent.
+SELECT public.v2_acknowledge_read_chunk(current_setting('test.retained_room')::uuid,0);
 SELECT public.v2_submit_reply(current_setting('test.retained_room')::uuid,
  current_setting('test.owner_note')::uuid,'Partner contribution survives',
  '90000000-0000-4000-8000-000000000012') AS partner_reply \gset
