@@ -845,21 +845,27 @@ export function DemoLibrary() {
                 !(t.bookId===book.id&&t.chapterIndex===chapterIndex&&(t.page??0)===pageOffset)))}>清除当前页笔迹</button>
               <button type="button" onClick={()=>setDrawing(false)}>完成</button>
             </div>}
-            <div className="demo-reading-layout">
+            <div className="demo-reading-layout" data-paged="true">
               <div className="demo-book-column">
-                <div className={"demo-pages"+(doublePage?" demo-pages-spread":"")}>
-                  {renderChapter(chapterIndex)}
-                  {doublePage&&chapterIndex+1<book.chapters.length&&renderChapter(chapterIndex+1,true)}
+                <div className={"demo-pages"+(visiblePages===2?" demo-pages-spread":"")}>
+                  {renderChapter(safeChapterIndex,pageOffset)}
+                  {visiblePages===2&&(
+                    pageOffset+1<pageCount
+                      ?renderChapter(safeChapterIndex,pageOffset+1,true)
+                      :safeChapterIndex+1<book.chapters.length
+                        ?renderChapter(safeChapterIndex+1,0,true)
+                        :<div className="demo-blank-facing-page" aria-label="本书最后一页"/>
+                  )}
                 </div>
                 <div className="demo-page-navigation">
-                  <button type="button" disabled={chapterIndex===0}
-                    onClick={()=>goChapter(chapterIndex-1)}>‹ <span>上一章</span></button>
+                  <button type="button" disabled={safeChapterIndex===0&&pageOffset===0}
+                    aria-label="上一页" onClick={()=>turnPage(-1)}>‹ <span>上一页</span></button>
                   <div className="demo-reader-progress">
                     <div className="demo-progress-track"><span style={{width:percent+"%"}}/></div>
-                    <div className="demo-progress-label">已读 {percent}% · {chapterIndex+1}/{book.chapters.length}</div>
+                    <div className="demo-progress-label">已读 {percent}% · 第 {Math.min(pageCount,pageOffset+1)}–{Math.min(pageCount,pageOffset+visiblePages)} / {pageCount} 页 · 第 {safeChapterIndex+1}/{book.chapters.length} 段</div>
                   </div>
-                  <button type="button" disabled={chapterIndex===book.chapters.length-1}
-                    onClick={()=>goChapter(chapterIndex+1)}><span>下一章</span> ›</button>
+                  <button type="button" disabled={safeChapterIndex===book.chapters.length-1&&pageOffset+visiblePages>=pageCount}
+                    aria-label="下一页" onClick={()=>turnPage(1)}><span>下一页</span> ›</button>
                 </div>
               </div>
               {notesVisible&&<aside className="demo-annotation-aside" aria-label="当前章节共读批注">
@@ -937,7 +943,7 @@ export function DemoLibrary() {
                 <strong>{fontSize}px</strong>
               </label>
             </div>
-            <div className="demo-settings-row"><div><h2>桌面双页</h2><p>宽屏可以同时看到下一章，小屏自动单页。</p></div>
+            <div className="demo-settings-row"><div><h2>桌面双页</h2><p>宽屏像纸质书一样显示连续两页。点击左右翻页，不需要纵向滚动。</p></div>
               <button type="button" className={"demo-toggle"+(doublePage?" demo-toggle-on":"")}
                 role="switch" aria-checked={doublePage} aria-label="桌面双页模式"
                 onClick={()=>setDoublePage(x=>!x)}><span/></button>
