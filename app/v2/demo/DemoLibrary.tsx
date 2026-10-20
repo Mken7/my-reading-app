@@ -259,12 +259,20 @@ export function DemoLibrary() {
               setBooks([...seedBooks,...imported.slice(0,MAX_IMPORTED_BOOKS)]);
             }
             if(Array.isArray(parsed.notes)){
-              const mine=(parsed.notes as DemoNote[]).filter(n=>n&&
-                n.author==="我"&&typeof n.id==="string"&&typeof n.bookId==="string"&&
+              const storedNotes=(parsed.notes as DemoNote[]).filter(n=>n&&
+                (n.author==="我"||n.author==="共读伙伴")&&
+                typeof n.id==="string"&&n.id.length<100&&typeof n.bookId==="string"&&
                 typeof n.quote==="string"&&n.quote.length<=160&&
                 typeof n.content==="string"&&n.content.length<=240&&
-                Number.isInteger(n.chapterIndex)&&n.chapterIndex>=0);
-              setNotes([...initialNotes,...mine.slice(0,500)]);
+                Number.isInteger(n.chapterIndex)&&n.chapterIndex>=0)
+                .slice(0,500).map(n=>({...n,
+                  replies:Array.isArray(n.replies)?n.replies.filter(r=>r&&
+                    typeof r.id==="string"&&typeof r.content==="string"&&
+                    r.content.length<=240).slice(0,100):[],
+                }));
+              const overrides=new Map(storedNotes.map(n=>[n.id,n]));
+              setNotes([...initialNotes.map(n=>overrides.get(n.id)??n),
+                ...storedNotes.filter(n=>n.author==="我")]);
             }
             if(Array.isArray(parsed.saved))setSaved(parsed.saved.filter(
               (x:unknown)=>typeof x==="string"&&x.length<=100).slice(0,300));
@@ -306,7 +314,7 @@ export function DemoLibrary() {
         const snapshot={
           version:1,
           importedBooks:books.filter(b=>b.imported),
-          notes:notes.filter(n=>n.author==="我"),
+          notes:notes.filter(n=>n.author==="我"||(n.replies?.length??0)>0),
           saved,progress,strokes,markings,settings:{night,fontSize,doublePage},
           recentBook:bookId,
         };
@@ -320,10 +328,11 @@ export function DemoLibrary() {
   },[localReady,books,notes,saved,progress,strokes,markings,night,fontSize,doublePage,bookId]);
 
   const book=books.find(item=>item.id===bookId)??books[0];
-  const chapter=book.chapters[chapterIndex];
-  const saveKey=book.id+":"+chapterIndex;
+  const safeChapterIndex=Math.max(0,Math.min(chapterIndex,book.chapters.length-1));
+  const chapter=book.chapters[safeChapterIndex];
+  const saveKey=book.id+":"+safeChapterIndex;
   const bookmarked=saved.includes(saveKey);
-  const currentNotes=notes.filter(item=>item.bookId===book.id && item.chapterIndex===chapterIndex);
+  const currentNotes=notes.filter(item=>item.bookId===book.id && item.chapterIndex===safeChapterIndex);
   const allBookNotes=notes.filter(item=>item.bookId===book.id);
   const results=books.filter(item=>
     (kind==="全部"||(kind==="我的导入"?item.imported===true:item.kind===kind)) &&
