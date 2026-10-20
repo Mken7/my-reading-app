@@ -3,6 +3,7 @@ const fs=require("node:fs");
 const http=require("node:http");
 const path=require("node:path");
 const {spawn,spawnSync}=require("node:child_process");
+const {readStaticBrowserMarker}=require("../../lib/v2/staticBrowserMarker.cjs");
 
 const out=path.resolve(__dirname,"../../out");
 const enabled=process.argv.includes("--enabled");
@@ -89,9 +90,9 @@ async function check(port,width){
   browser.on("error",error=>{clearTimeout(timeout);reject(error);});
   browser.on("close",code=>{
    clearTimeout(timeout);
-   const text=stdout.match(/V2_STATIC_(?:PASS|FAIL):[^<]*/)?.[0];
+   const text=readStaticBrowserMarker(stdout);
    if(code===0&&text?.startsWith("V2_STATIC_PASS:"))resolve(text);
-   else reject(Error("Static preview "+width+"px failed: "+(text??"missing test result")+
+   else reject(Error("Static preview "+width+"px failed: "+(text??"missing rendered assertion node")+
     " "+stderr.slice(-350)));
   });
  });
