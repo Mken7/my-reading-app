@@ -31,6 +31,8 @@ jobs:
         run: npm run build
         env:
           DEPLOY_TARGET: github-pages
+          # Do not accidentally enable staging Auth on the public Pages site.
+          NEXT_PUBLIC_ENABLE_V2_PREVIEW: "false"
 
       - name: Validate static export
         run: test -f out/index.html
