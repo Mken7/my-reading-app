@@ -156,8 +156,14 @@ try{
 }finally{
  protocol?.close();
  browser?.child.kill();
- if(browser?.userData)fs.rmSync(browser.userData,{
-  recursive:true,force:true,maxRetries:20,retryDelay:150,
- });
+ if(browser?.userData){
+  try{
+   fs.rmSync(browser.userData,{recursive:true,force:true,maxRetries:8,retryDelay:120});
+  }catch{
+   // Chromium sometimes creates one more transient profile file after exit.
+   // The disposable CI runner will remove it after the job.
+   console.warn("Deferred ephemeral Chromium profile cleanup");
+  }
+ }
  server.close();
 }
