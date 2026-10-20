@@ -180,8 +180,14 @@ try{
 }finally{
  protocol?.close();
  browser?.child.kill();
- if(browser?.userData)fs.rmSync(browser.userData,{
-  recursive:true,force:true,maxRetries:20,retryDelay:150,
- });
+ if(browser?.userData){
+  try{
+   fs.rmSync(browser.userData,{recursive:true,force:true,maxRetries:8,retryDelay:120});
+  }catch{
+   // Chromium can still write into its disposable profile during shutdown.
+   // The ephemeral CI runner cleans its temporary directory at job exit.
+   console.warn("Deferred ephemeral Chromium profile cleanup after browser exit");
+  }
+ }
  server.close();
 }
