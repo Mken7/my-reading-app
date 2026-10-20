@@ -28,6 +28,8 @@ jobs:
           DEPLOY_TARGET: github-pages
       - name: Assert output was exported
         run: test -f out/index.html
+      - name: Browser smoke the exported V2 preview at narrow and desktop widths
+        run: node tests/browser/run-v2-static.cjs
 
   browser-queue:
     runs-on: ubuntu-latest
