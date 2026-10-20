@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect,useRef,useState,type ChangeEvent,type FormEvent,type PointerEvent} from "react";
+import {useEffect,useLayoutEffect,useRef,useState,type ChangeEvent,type FormEvent,type KeyboardEvent,type PointerEvent} from "react";
 import {decodeTxt,prepareTxt} from "@/lib/v2/txt";
 import {prepareEpub} from "@/lib/v2/epub";
 import {preparePdf} from "@/lib/v2/pdf";
@@ -217,6 +217,7 @@ export function DemoLibrary() {
   const [screen,setScreen] = useState<"library"|"reader"|"notes"|"bookmarks"|"settings">("library");
   const [books,setBooks] = useState<DemoBook[]>(seedBooks);
   const [progress,setProgress] = useState<Record<string,number>>({});
+  const [pageProgress,setPageProgress] = useState<Record<string,number>>({});
   const [strokes,setStrokes] = useState<Stroke[]>([]);
   const [markings,setMarkings] = useState<Marking[]>([]);
   const [drawing,setDrawing] = useState(false);
@@ -227,6 +228,12 @@ export function DemoLibrary() {
   const [localReady,setLocalReady] = useState(false);
   const [bookId,setBookId] = useState("rain");
   const [chapterIndex,setChapterIndex] = useState(0);
+  const [pageOffset,setPageOffset] = useState(0);
+  const [pageCount,setPageCount] = useState(1);
+  const [columnWidth,setColumnWidth] = useState(0);
+  const flowViewportRef=useRef<HTMLDivElement|null>(null);
+  const flowRef=useRef<HTMLDivElement|null>(null);
+  const jumpToChapterEnd=useRef(false);
   const [kind,setKind] = useState<string>("全部");
   const [search,setSearch] = useState("");
   const [notes,setNotes] = useState<DemoNote[]>(initialNotes);
@@ -274,6 +281,12 @@ export function DemoLibrary() {
               setNotes([...initialNotes.map(n=>overrides.get(n.id)??n),
                 ...storedNotes.filter(n=>n.author==="我")]);
             }
+            if(parsed.pageProgress&&typeof parsed.pageProgress==="object"&&!Array.isArray(parsed.pageProgress)){
+              const p=parsed.pageProgress as Record<string,unknown>;
+              setPageProgress(Object.fromEntries(Object.entries(p).filter(
+                ([key,val])=>key.length<100&&Number.isInteger(val)&&Number(val)>=0&&Number(val)<10000
+              )) as Record<string,number>);
+            }
             if(Array.isArray(parsed.saved))setSaved(parsed.saved.filter(
               (x:unknown)=>typeof x==="string"&&x.length<=100).slice(0,300));
             if(parsed.progress&&typeof parsed.progress==="object"&&!Array.isArray(parsed.progress)){
@@ -315,7 +328,7 @@ export function DemoLibrary() {
           version:1,
           importedBooks:books.filter(b=>b.imported),
           notes:notes.filter(n=>n.author==="我"||(n.replies?.length??0)>0),
-          saved,progress,strokes:strokes.filter(Boolean),markings,settings:{night,fontSize,doublePage},
+          saved,progress,pageProgress,strokes:strokes.filter(Boolean),markings,settings:{night,fontSize,doublePage},
           recentBook:bookId,
         };
         const serialized=JSON.stringify(snapshot);
@@ -325,7 +338,7 @@ export function DemoLibrary() {
       }catch{setNotice("本地保存失败：可能已达到浏览器容量限制。请先导出备份。");}
     },320);
     return()=>window.clearTimeout(timeout);
-  },[localReady,books,notes,saved,progress,strokes,markings,night,fontSize,doublePage,bookId]);
+  },[localReady,books,notes,saved,progress,pageProgress,strokes,markings,night,fontSize,doublePage,bookId]);
 
   const book=books.find(item=>item.id===bookId)??books[0];
   const safeChapterIndex=Math.max(0,Math.min(chapterIndex,book.chapters.length-1));
@@ -338,7 +351,9 @@ export function DemoLibrary() {
     (kind==="全部"||(kind==="我的导入"?item.imported===true:item.kind===kind)) &&
     (item.title+item.subtitle+item.author).toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())
   );
-  const percent=Math.round((chapterIndex+1)/book.chapters.length*100);
+  const percent=Math.round((safeChapterIndex+(pageOffset+1)/Math.max(1,pageCount))/book.chapters.length*100);
+  const visiblePages=doublePage&&typeof window!=="undefined"&&window.innerWidth>650?2:1;
+  const pageKey=book.id+":"+safeChapterIndex;
   const allBookmarks=saved.flatMap(key=>{
     const last=key.lastIndexOf(":");
     const found=books.find(item=>item.id===key.slice(0,last));
@@ -352,12 +367,15 @@ export function DemoLibrary() {
     if(next==="reader")setTocVisible(false);
   }
   function openBook(id:string){
-    setBookId(id);setChapterIndex(Math.min(progress[id]??0,(books.find(x=>x.id===id)?.chapters.length??1)-1));setScreen("reader");
+    const nextChapter=Math.min(progress[id]??0,(books.find(x=>x.id===id)?.chapters.length??1)-1);
+    setBookId(id);setChapterIndex(nextChapter);
+    setPageOffset(pageProgress[id+":"+nextChapter]??0);setScreen("reader");
     setTocVisible(false);setOpenNoteId(null);setNoteDraft("");setNotesVisible(true);setNotice("");
   }
   function goChapter(index:number){
     if(index<0||index>=book.chapters.length)return;
-    setChapterIndex(index);setProgress(p=>({...p,[book.id]:index}));
+    setChapterIndex(index);setPageOffset(0);setPageCount(1);
+    setProgress(p=>({...p,[book.id]:index}));
     setOpenNoteId(null);setSelection(null);setDrawing(false);
     setTocVisible(false);setNoteDraft("");setNotice("");
   }
@@ -403,7 +421,7 @@ export function DemoLibrary() {
         subtitle:"仅保存在当前浏览器 · 可以离线阅读",author:"我导入的测试读物",
         kind:"我的导入",edition:"LOCAL ONLY",color:"moss",initials:"本",
         chapters,imported:true}]);
-      setBookId(id);setChapterIndex(0);setScreen("reader");setKind("全部");
+      setBookId(id);setChapterIndex(0);setPageOffset(0);setScreen("reader");setKind("全部");
       setNotice("已导入本地阅读。受浏览器容量限制，请及时备份，切勿依赖它保存唯一原稿。");
     }catch(error){
       setNotice(error instanceof Error?error.message:"无法安全解析此文件。");
@@ -418,7 +436,7 @@ export function DemoLibrary() {
     setMarkings(old=>old.filter(m=>m.bookId!==id));
     setStrokes(old=>old.filter(d=>d.bookId!==id));
     setProgress(old=>{const next={...old};delete next[id];return next;});
-    if(bookId===id){setBookId("rain");setChapterIndex(0);}
+    if(bookId===id){setBookId("rain");setChapterIndex(0);setPageOffset(0);}
     setNotice("本地导入书籍已移除。");
   }
   function saveExport(){
@@ -787,7 +805,7 @@ export function DemoLibrary() {
           <h1 className="demo-page-title">那些想留下的句子。</h1>
           <p className="demo-page-description">一段文字，两种读法。批注和回复保存于本机，不会发送给别人。</p>
           <label className="demo-book-pick">选择演示书籍
-            <select value={bookId} onChange={e=>{setBookId(e.target.value);setChapterIndex(0);}}>
+            <select value={bookId} onChange={e=>{setBookId(e.target.value);setChapterIndex(0);setPageOffset(0);}}>
               {books.map(item=><option value={item.id} key={item.id}>{item.title}</option>)}
             </select>
           </label>
@@ -795,7 +813,7 @@ export function DemoLibrary() {
             {allBookNotes.map(item=><div className="demo-notes-list-item" key={item.id}>
               {renderNote(item)}
               <button type="button" onClick={()=>{
-                setChapterIndex(item.chapterIndex);setScreen("reader");
+                setChapterIndex(item.chapterIndex);setPageOffset(0);setScreen("reader");
                 setOpenNoteId(item.id);setNotesVisible(true);
               }}>前往第 {item.chapterIndex+1} 章 →</button>
             </div>)}
@@ -811,7 +829,7 @@ export function DemoLibrary() {
             {allBookmarks.map(entry=><div key={entry.key} className="demo-bookmark-item">
               <span>{entry.book.title} · {entry.book.chapters[entry.chapterIndex].name}</span>
               <button type="button" onClick={()=>{setBookId(entry.book.id);
-                setChapterIndex(entry.chapterIndex);setScreen("reader");}}>前往阅读 →</button>
+                setChapterIndex(entry.chapterIndex);setPageOffset(0);setScreen("reader");}}>前往阅读 →</button>
               <button type="button" onClick={()=>setSaved(old=>old.filter(k=>k!==entry.key))}>移除</button>
             </div>)}
             {allBookmarks.length===0&&<p>你还没有添加书签。打开一本书，点击右上角的书签按钮。</p>}
@@ -850,7 +868,8 @@ export function DemoLibrary() {
                 localStorage.removeItem(DEMO_STORAGE_KEY);
                 setBooks(seedBooks);setBookId("rain");setChapterIndex(0);
                 setNight(false);setFontSize(19);setDoublePage(true);setSaved([]);
-                setProgress({});setStrokes([]);setMarkings([]);setSelection(null);
+                setProgress({});setPageProgress({});setPageOffset(0);setPageCount(1);
+                setStrokes([]);setMarkings([]);setSelection(null);
                 setNotes(initialNotes);setNoteDraft("");setOpenNoteId(null);
                 setNotice("已清除本地数据并恢复初始演示。");
               }}>清除本地数据</button>
