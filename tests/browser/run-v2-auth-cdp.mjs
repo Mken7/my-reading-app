@@ -153,6 +153,8 @@ try{
 }finally{
  protocol?.close();
  browser?.child.kill();
- if(browser?.userData)fs.rmSync(browser.userData,{recursive:true,force:true});
+ if(browser?.userData)fs.rmSync(browser.userData,{
+  recursive:true,force:true,maxRetries:20,retryDelay:150,
+ });
  server.close();
 }
