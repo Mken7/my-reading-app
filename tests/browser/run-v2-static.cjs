@@ -47,7 +47,9 @@ const injected=`<script>(() => {
    JSON.stringify({width:innerWidth,overflowing,disabled:!!title.includes("默认关闭"),
     exposedAuthForm:!!realForm,hasEmail:!!emailForm,viewport:!!viewport,
     unlabeledInputs:unlabeled.filter(x=>x.matches("input")).length,
-    undersizedFields:undersizedFields.length,keyboardFocusOutline,authFetch});
+    undersizedFields:undersizedFields.length,keyboardFocusOutline,authFetch,
+    heading:title,bodyText:document.body.innerText.slice(0,200),
+    javascriptFiles:performance.getEntriesByType("resource").filter(x=>x.name.includes("/_next/")).length});
   document.body.appendChild(result);
  };
  window.setTimeout(report,2500);
