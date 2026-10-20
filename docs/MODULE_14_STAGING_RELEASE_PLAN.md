@@ -8,14 +8,14 @@
 - `validate-pr.yml` 在 PR 上自动运行 Node 单元测试、严格 ESLint、Next.js 静态构建、独立 PostgreSQL 16 的完整 RLS/SQL 回归、Chrome IndexedDB/EPUB/PDF/响应式阅读器测试。
 - `tests/browser/run-v2-static.cjs` 实际用 Chromium 打开 **从 Next.js 静态构建出来的** `/my-reading-app/v2/`，检查 520/768/1280 px 浏览器视口没有横向溢出；未配置环境时，预览仍关闭、不渲染登录表单、不向 Supabase Auth/REST 发请求。这不是 iOS/Android 真机测试，也不验证已登录大厅的所有布局。
 - `tests/staging/run-supabase-e2e.mjs`：**只交付脚本，未有通过的真实环境证据**。该脚本在手动提供的独立测试库、三组已验证邮箱账号上执行：Auth 登录、匿名/非成员读权、六位邀请码及房主审批、版权声明、受保护段落上传、原文和未来共享笔记隔离、实际 Realtime 事件、成员退出撤权、双方同意后销毁新建的临时书房。
-- CI 的 `staging-three-accounts` job **只可手动触发**，不在 PR 或 Fork 上使用账号凭据；缺少测试项目标识、账户或明确测试环境确认时失败关闭。测试会创建并删除一次性测试书房，可能消耗限额；失败时输出仅限临时房间 ID 和检查阶段，不打印密钥。
+- 隔离 staging 脚本**不会在常规 PR CI 中运行**；未来 `staging-three-accounts` GitHub 手动 job 还需要在默认分支建立工作流后才能实际触发。缺少测试项目标识、账户或明确测试环境确认时测试脚本失败关闭。脚本会创建并删除一次性测试书房，可能消耗限额；失败时仅输出临时房间 ID 和检查阶段，不打印密钥。
 
 ## 真实独立 Supabase 准备（阻断项）
 
 1. **先创建单独的 Supabase 测试项目**，确定它不等于原版已使用的生产项目。不要共享生产账号、用户表数据或 service_role/管理员密钥。提前检查免费额度、账单与网络政策，避免未经同意产生费用。
 2. 使用测试项目数据库依**文件名顺序**运行 `supabase/migrations/` 的所有 20261018*/20261019* V2 SQL 文件，含最新 `20261019190000_v2_security_copyright_audit.sql`。留存迁移检查记录、Supabase Realtime `supabase_realtime` publication 的目标表和 Postgres RLS 配置证据。不要对老数据库迁移。
 3. 在 Auth 开启 Confirm Email 和正确的测试邮箱/密码登录配置。提前创建和完成邮箱确认的 **三组独立测试用户**（房主、伙伴、无关第三人），不要使用个人常用密码。
-4. 在 GitHub **environment `v2-staging`** 中设置 `V2_STAGING_URL`、`V2_STAGING_PROJECT_REF`、`V2_STAGING_PUBLISHABLE_KEY`、`V2_STAGING_OWNER_EMAIL`、`V2_STAGING_OWNER_PASSWORD`、`V2_STAGING_PARTNER_EMAIL`、`V2_STAGING_PARTNER_PASSWORD`、`V2_STAGING_OUTSIDER_EMAIL`、`V2_STAGING_OUTSIDER_PASSWORD` 这些隔离测试值。**不要把任何凭据粘贴到 GitHub issue、README、PR、公开聊天或网页源代码中。** 仅按 GitHub Actions 的 `workflow_dispatch` 在开发分支运行 `Validate pull request`；该独立 job 需要手动触发，不会从 PR 自动拿 secrets。
+4. 在本机安全环境变量（**不要提交到代码仓库**）中配置 `V2_STAGING_URL`、`V2_STAGING_PROJECT_REF`、`V2_STAGING_PUBLISHABLE_KEY`、`V2_STAGING_OWNER_EMAIL`、`V2_STAGING_OWNER_PASSWORD`、`V2_STAGING_PARTNER_EMAIL`、`V2_STAGING_PARTNER_PASSWORD`、`V2_STAGING_OUTSIDER_EMAIL`、`V2_STAGING_OUTSIDER_PASSWORD`，并明确设置 `V2_ALLOW_MUTATING_STAGING_TEST=I_CONFIRM_ISOLATED_STAGING_ONLY`。执行 `node tests/staging/run-supabase-e2e.mjs`。**不要把凭据粘贴到 GitHub issue、README、PR 或公开聊天。** 目前 `validate-pr.yml` 仅在功能分支，GitHub 的 `workflow_dispatch` 通常要求工作流先存在于默认分支，故**不可声称当前就能从 Actions 页面手动运行 staging job**；该 job 是未来经过独立审查后合并工作流才可能启用的途径。目前必须从安全本地测试机运行。
 5. `staging-three-accounts` 必须绿色，且由实际操作人员复核测试库：真实确认/恢复密码邮件、Realtime 断线重连、伙伴取消权限后订阅停止、请求配额重试、移动端表单状态、书房历史/注销/报告审核、超长书籍实际导入、储存空间和跨账号缓存清除。纯 HTTP RPC 实际联调**不能代替网页点击端到端流程**。
 6. 测试完成或中断时核对临时书房与临时内容是否被删除（脚本异常会输出房间 ID 供操作者使用受控数据库清理）。不可为了清理失败而删除测试环境里的其他人的资料。
 
