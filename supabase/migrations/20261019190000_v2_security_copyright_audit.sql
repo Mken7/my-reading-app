@@ -39,7 +39,7 @@ BEGIN
  VALUES(target_room,actor,rights_basis);
  RETURN true;
 END;
-$;
+$$;
 CREATE FUNCTION public.v2_my_book_rights(target_room uuid)
 RETURNS TABLE(rights_basis text,affirmed_at timestamptz)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path=''
