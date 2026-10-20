@@ -170,7 +170,11 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
    throw Error("Demo did not reach "+label);
   };
   await send("Page.navigate",{url},sessionId);
-  await waitFor("document.querySelectorAll('.demo-book-card').length===3","bookshelf");
+  await waitFor("document.querySelector('.demo-app')?.dataset.demoReady==='yes'","hydrated bookshelf");
+  // Run every device-width test from the same clean, deterministic local state.
+  await evalPage("localStorage.removeItem('reading-v2-offline-ui-demo-1');true");
+  await send("Page.reload",{ignoreCache:true},sessionId);
+  await waitFor("document.querySelector('.demo-app')?.dataset.demoReady==='yes'&&document.querySelectorAll('.demo-book-card').length===3","clean bookshelf");
   const metrics=await evalPage("({width:innerWidth,overflow:document.documentElement.scrollWidth>innerWidth+4})");
   if(metrics.width!==width||metrics.overflow)
    throw Error("Demo layout overflow: "+JSON.stringify(metrics));
@@ -192,7 +196,7 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
   await waitFor("document.querySelector('.demo-reader-back h1')?.textContent==='本地测试读物'","local TXT import");
   await delay(1000);
   await send("Page.reload",{ignoreCache:true},sessionId);
-  await waitFor("document.querySelectorAll('.demo-book-card').length===4","reloaded imported shelf");
+  await waitFor("document.querySelector('.demo-app')?.dataset.demoReady==='yes'&&document.querySelectorAll('.demo-book-card').length===4","reloaded imported shelf");
   await evalPage("(()=>{const card=[...document.querySelectorAll('.demo-book-card')].find(el=>el.textContent.includes('本地测试读物'));card.click();return true;})()");
   await waitFor("document.querySelector('.demo-reader-back h1')?.textContent==='本地测试读物'","reloaded imported book");
   await evalPage("document.querySelector('.demo-back-button').click();true");
