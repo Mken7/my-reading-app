@@ -345,7 +345,7 @@ export function DemoLibrary() {
   const book=books.find(item=>item.id===bookId)??books[0];
   const safeChapterIndex=Math.max(0,Math.min(chapterIndex,book.chapters.length-1));
   const chapter=book.chapters[safeChapterIndex];
-  const saveKey=book.id+":"+safeChapterIndex;
+  const saveKey=book.id+":"+safeChapterIndex+":"+pageOffset;
   const bookmarked=saved.includes(saveKey);
   const currentNotes=notes.filter(item=>item.bookId===book.id && item.chapterIndex===safeChapterIndex);
   const allBookNotes=notes.filter(item=>item.bookId===book.id);
@@ -426,11 +426,12 @@ export function DemoLibrary() {
   });
 
   const allBookmarks=saved.flatMap(key=>{
-    const last=key.lastIndexOf(":");
-    const found=books.find(item=>item.id===key.slice(0,last));
-    const index=Number(key.slice(last+1));
-    return found&&Number.isInteger(index)&&index>=0&&index<found.chapters.length
-      ? [{key,book:found,chapterIndex:index}]:[];
+    const [id,chapterPart,pagePart="0"]=key.split(":");
+    const found=books.find(item=>item.id===id);
+    const index=Number(chapterPart),physicalPage=Number(pagePart);
+    return found&&Number.isInteger(index)&&index>=0&&index<found.chapters.length&&
+      Number.isInteger(physicalPage)&&physicalPage>=0&&physicalPage<10000
+      ? [{key,book:found,chapterIndex:index,physicalPage}]:[];
   });
 
   function navigate(next:"library"|"reader"|"notes"|"bookmarks"|"settings"){
@@ -917,9 +918,9 @@ export function DemoLibrary() {
           <p className="demo-page-description">你收藏的页面都在这里，刷新后仍然保留在当前浏览器中。</p>
           <div className="demo-bookmark-list">
             {allBookmarks.map(entry=><div key={entry.key} className="demo-bookmark-item">
-              <span>{entry.book.title} · {entry.book.chapters[entry.chapterIndex].name}</span>
+              <span>{entry.book.title} · {entry.book.chapters[entry.chapterIndex].name} · 第 {entry.physicalPage+1} 页</span>
               <button type="button" onClick={()=>{setBookId(entry.book.id);
-                setChapterIndex(entry.chapterIndex);setPageOffset(0);setScreen("reader");}}>前往阅读 →</button>
+                setChapterIndex(entry.chapterIndex);setPageOffset(entry.physicalPage);setScreen("reader");}}>前往阅读 →</button>
               <button type="button" onClick={()=>setSaved(old=>old.filter(k=>k!==entry.key))}>移除</button>
             </div>)}
             {allBookmarks.length===0&&<p>你还没有添加书签。打开一本书，点击右上角的书签按钮。</p>}
