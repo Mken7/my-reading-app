@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { V2Preview } from "./V2Preview";
+import "./device-compat.css";
 
 export const metadata: Metadata = {
   title: "安全书房 V2 · 测试预览",
@@ -8,7 +9,7 @@ export const metadata: Metadata = {
 
 export default function V2PreviewPage() {
   return (
-    <main className="h-full overflow-y-auto bg-[#f3efe6] px-4 py-12 text-[#2c2825]">
+    <main className="v2-preview-shell h-full overflow-y-auto bg-[#f3efe6] px-4 py-12 text-[#2c2825]">
       <div className="mx-auto max-w-3xl">
         <header className="mb-8 border-b border-[#d9d0c1] pb-6">
           <p className="text-xs tracking-[0.25em] text-[#84796a]">S. / TEST ENVIRONMENT</p>
