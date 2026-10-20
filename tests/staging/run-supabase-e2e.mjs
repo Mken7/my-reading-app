@@ -52,9 +52,9 @@ const expectRows=async(c,table,room,limit=10)=>{
  if(result.error)throw Error(table+" SELECT failed ("+result.error.code+")");
  return result.data??[];
 };
-const makeEvent=async(c,room,author,body,visibility)=>{
+const makeEvent=async(c,room,author,body,visibility,chunkIndex=0)=>{
  const {data,error}=await c.from("reading_highlights_v2").insert({
-  room_id:room,chunk_index:0,author_id:author,start_index:0,end_index:3,
+  room_id:room,chunk_index:chunkIndex,author_id:author,start_index:0,end_index:3,
   body,visibility,
  }).select("id").single();
  if(error||!data?.id)throw Error("test highlight insert denied");
@@ -124,6 +124,9 @@ try{
  must(await rpc(owner,"v2_upload_book_chunk",{
   target_room:room,target_index:0,chunk_text:"Test book content only",
  })===true,"Rights-approved upload failed");
+ must(await rpc(owner,"v2_upload_book_chunk",{
+  target_room:room,target_index:1,chunk_text:"Future staging chapter - never a real copyrighted book",
+ })===true,"Could not upload test future chapter");
  must((await rpc(partner,"v2_read_book_chunks",{
   target_room:room,from_index:0,requested_count:1,
  })).length===1,"Approved partner could not read protected content");
@@ -137,11 +140,14 @@ try{
  });
  must(pre===false,"Partner saw shared note before page acknowledgement");
  await makeEvent(owner,room,sessions[0],"private test note","private");
+ await makeEvent(owner,room,sessions[0],"future chapter spoiler","shared",1);
  must((await expectRows(partner,"reading_highlights_v2",room)).length===0,
   "Partner saw owner's private note");
  must((await rpc(partner,"v2_acknowledge_read_chunk",{
   target_room:room,target_chunk:0,
  }))===true,"Explicit page acknowledgement failed");
+ must((await expectRows(partner,"reading_highlights_v2",room)).length===0,
+  "Acknowledging first page leaked future shared chapter notes");
 
  let eventReceived=false;
  realtimeChannel=partner.channel("test-v2-e2e-"+room)
@@ -162,9 +168,16 @@ try{
  await makeEvent(owner,room,sessions[0],"shared test note","shared");
  const shared=await expectRows(partner,"reading_highlights_v2",room);
  must(shared.length===1&&shared[0].body==="shared test note",
-  "Partner could not read authorized shared note or got private note");
+  "Partner could not read authorized shared note or got private/future note");
  for(let i=0;i<12&&!eventReceived;i++)await delay(500);
  must(eventReceived,"Actual Supabase Realtime shared event never arrived");
+ must(await rpc(partner,"v2_acknowledge_read_chunk",{
+  target_room:room,target_chunk:1,
+ })===true,"Partner cannot explicitly open next chapter");
+ const unlocked=await expectRows(partner,"reading_highlights_v2",room);
+ must(unlocked.length===2&&unlocked.some(item=>item.body==="future chapter spoiler")&&
+  !unlocked.some(item=>item.visibility==="private"),
+  "New chapter did not unlock its own notes or exposed private material");
 
  checkpoint="POST_LEAVE_RLS";
  must(await rpc(partner,"v2_leave_reading_room",{target_room:room})===true,
@@ -176,6 +189,10 @@ try{
   "Departed member retained shared annotation access");
  must((await rpc(partner,"v2_verify_room_audit",{target_room:room}))?.valid===true,
   "Historical audit verification unavailable to departed member");
+ eventReceived=false;
+ await makeEvent(owner,room,sessions[0],"After partner departed","shared");
+ for(let i=0;i<8;i++)await delay(500);
+ must(!eventReceived,"Former member's live subscription still received protected updates");
 
  checkpoint="CONSENTED_CLEANUP";
  must(await rpc(owner,"v2_change_room_state",{
