@@ -14,7 +14,7 @@ BEGIN
   RAISE EXCEPTION 'upload accepted without copyright attestation';
  EXCEPTION WHEN insufficient_privilege THEN NULL;
  END;
- IF EXISTS(SELECT 1 FROM public.reading_chunks_v2 WHERE room_id=room) THEN
+ IF EXISTS(SELECT 1 FROM public.v2_read_book_chunks(room,0,1)) THEN
   RAISE EXCEPTION 'unattested book content was written';
  END IF;
  IF public.v2_confirm_book_rights(room,'unsupported') THEN
@@ -128,8 +128,11 @@ BEGIN
    'Evidence review completed, case closed')
  OR public.v2_decide_report(report,'reviewed','Attempt reopening case')
  THEN RAISE EXCEPTION 'moderation workflow invalid'; END IF;
- IF EXISTS(SELECT 1 FROM public.reading_v2_case_actions)
- THEN RAISE EXCEPTION 'reviewer raw action log accessible'; END IF;
+ BEGIN
+  PERFORM 1 FROM public.reading_v2_case_actions;
+  RAISE EXCEPTION 'reviewer raw action log accessible';
+ EXCEPTION WHEN insufficient_privilege THEN NULL;
+ END;
  IF (SELECT count(*) FROM public.v2_export_audit_evidence(
     current_setting('test.found_room')::uuid))<1
  THEN RAISE EXCEPTION 'trusted audit evidence inaccessible'; END IF;
