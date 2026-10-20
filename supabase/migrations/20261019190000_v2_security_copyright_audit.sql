@@ -7,6 +7,15 @@ CREATE TABLE public.reading_copyright_claims_v2(
  affirmation_version integer NOT NULL DEFAULT 1 CHECK(affirmation_version=1),
  affirmed_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE public.reading_v2_rights_history(
+ id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+ room_id uuid NOT NULL REFERENCES public.reading_rooms_v2(id) ON DELETE CASCADE,
+ claimant_id uuid NOT NULL REFERENCES auth.users(id),
+ rights_basis text NOT NULL CHECK(rights_basis IN ('original','public_domain','licensed')),
+ affirmed_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.reading_v2_rights_history ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.reading_v2_rights_history FROM PUBLIC,anon,authenticated;
 ALTER TABLE public.reading_copyright_claims_v2 ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.reading_copyright_claims_v2 FROM PUBLIC,anon,authenticated;
 
@@ -26,9 +35,11 @@ BEGIN
  ON CONFLICT(room_id) DO UPDATE
  SET claimant_id=EXCLUDED.claimant_id,rights_basis=EXCLUDED.rights_basis,
  affirmed_at=now();
+ INSERT INTO public.reading_v2_rights_history(room_id,claimant_id,rights_basis)
+ VALUES(target_room,actor,rights_basis);
  RETURN true;
 END;
-$$;
+$;
 CREATE FUNCTION public.v2_my_book_rights(target_room uuid)
 RETURNS TABLE(rights_basis text,affirmed_at timestamptz)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path=''
