@@ -50,6 +50,20 @@ export function V2ProtectedBook({ client, roomId, owner, userId }: Props) {
   const [rightsBasis,setRightsBasis]=useState<"original"|"public_domain"|"licensed">("original");
   const [rightsConfirmed,setRightsConfirmed]=useState(false);
   const [rightsBusy,setRightsBusy]=useState(false);
+  useEffect(()=>{
+    if(!owner)return;
+    let active=true;
+    void client.rpc("v2_my_book_rights",{target_room:roomId})
+      .then(({data,error})=>{
+        if(!active||error||!Array.isArray(data)||data.length<1)return;
+        const stored=data[0]?.rights_basis;
+        if(stored==="original"||stored==="public_domain"||stored==="licensed"){
+          setRightsBasis(stored);
+          setRightsConfirmed(true);
+        }
+      }).catch(()=>{/* Access to upload stays closed if rights cannot be verified. */});
+    return ()=>{active=false;};
+  },[client,roomId,owner]);
   const [uploadIndex, setUploadIndex] = useState(0);
   const [readIndex, setReadIndex] = useState(0);
   const [pageStart,setPageStart] = useState(0);
