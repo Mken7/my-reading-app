@@ -145,17 +145,21 @@ DECLARE room uuid:=current_setting('test.retained_room')::uuid;
 BEGIN
  IF public.v2_change_room_state(room,'closed') OR
    NOT public.v2_leave_reading_room(room) OR
-   public.v2_leave_reading_room(room) OR
-   public.v2_can_edit_room(room) THEN
+   public.v2_leave_reading_room(room) THEN
    RAISE EXCEPTION 'partner leave not isolated'; END IF;
- IF (SELECT count(*) FROM public.v2_my_room_history()
+END $leave$;
+DO $left_and_export$
+DECLARE room uuid:=current_setting('test.retained_room')::uuid;
+BEGIN
+ IF public.v2_can_edit_room(room) OR
+   (SELECT count(*) FROM public.v2_my_room_history()
       WHERE room_id=room AND role='partner' AND left_at IS NOT NULL)<>1
  OR jsonb_array_length((public.v2_export_my_room_section(room,'replies',0))
     ->'items')<>1 THEN
    RAISE EXCEPTION 'former reader cannot export own surviving replies'; END IF;
  IF public.v2_purge_closed_room(room)<>'denied' THEN
    RAISE EXCEPTION 'partner could trigger full-room purge'; END IF;
-END $leave$;
+END $left_and_export$;
 RESET ROLE;
 
 -- A complete room deletion needs owner closure plus every historical member's
