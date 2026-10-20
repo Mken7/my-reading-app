@@ -31,6 +31,29 @@ jobs:
       - name: Browser smoke the exported V2 preview at narrow and desktop widths
         run: node tests/browser/run-v2-static.cjs
 
+
+  browser-auth-screen:
+    # A disposable fake build, never pointed at Supabase or given credentials.
+    # The output is not uploaded or deployed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build isolated fake staging Auth login preview (no real credentials)
+        run: npm run build
+        env:
+          DEPLOY_TARGET: github-pages
+          NEXT_PUBLIC_ENABLE_V2_PREVIEW: "true"
+          NEXT_PUBLIC_V2_SUPABASE_URL: https://abcdefghijklmnopqrst.supabase.co
+          NEXT_PUBLIC_V2_SUPABASE_PUBLISHABLE_KEY: sb_publishable_CI_FAKE_NOT_A_REAL_KEY
+      - name: Hydrate and inspect auth forms in actual headless Chromium
+        run: node tests/browser/run-v2-static.cjs --enabled
+
+
   browser-queue:
     runs-on: ubuntu-latest
     steps:
