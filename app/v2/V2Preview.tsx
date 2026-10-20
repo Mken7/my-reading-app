@@ -40,7 +40,7 @@ function isOwnRequest(value:unknown):value is OwnRequest {
 }
 
 const fieldClass =
-  "w-full rounded-lg border border-[#cfc4b3] bg-white px-3 py-2 text-sm outline-none focus:border-[#6c4e39]";
+  "w-full min-h-11 rounded-lg border border-[#cfc4b3] bg-white px-3 py-3 text-sm outline-none focus:border-[#6c4e39]";
 const buttonClass =
   "rounded-lg bg-[#342e29] px-4 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50";
 const secondaryButtonClass =
