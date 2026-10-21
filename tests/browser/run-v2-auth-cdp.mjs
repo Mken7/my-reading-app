@@ -255,13 +255,12 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
   // into physical pages rather than expanding the paper and desktop scrollbar.
   await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-menu-item')].find(b=>b.textContent.includes('我的书架'));button.click();return true;})()");
   await waitFor("!!document.querySelector('.demo-file-input')","return to bookshelf");
-  await evalPage("(()=>{const text=Array.from({length:1050},(_,i)=>'分页标记 '+String(i).padStart(4,'0')+'：这是用于分页回归的原创测试文字。它必须在固定纸面内连续换行，下一页必须紧接上一页，不能重复、跳段、裁切或改为纵向滚动。').join('\\n\\n');const input=document.querySelector('.demo-file-input');const dt=new DataTransfer();dt.items.add(new File([text],'长文本翻页测试.txt',{type:'text/plain'}));input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));return true;})()");
+  await evalPage("(()=>{const text=Array.from({length:1050},(_,i)=>'分页标记 '+String(i).padStart(4,'0')+'：连续分页测试。').join('\\n\\n');const input=document.querySelector('.demo-file-input');const dt=new DataTransfer();dt.items.add(new File([text],'长文本翻页测试.txt',{type:'text/plain'}));input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));return true;})()");
   await waitFor("document.querySelector('.demo-reader-back h1')?.textContent==='长文本翻页测试'","long TXT book import");
   await waitFor("(()=>{const flow=document.querySelector('.demo-column-flow');const label=document.querySelector('.demo-progress-label');return flow&&flow.clientWidth>0&&flow.scrollWidth>flow.clientWidth*1.7&&label?.textContent.includes('页');})()","actual multi-column book pagination");
-  // Imports retain immutable 2,800-code-point chapters. At a tall desktop
-  // viewport that is naturally fewer physical pages; the compact desktop and
-  // mobile cases still exercise a full twenty-page sequence in one chapter.
-  const requiredPages=width>=1000&&height>700?15:20;
+  // Every viewport must traverse at least twenty physical pages in one
+  // chapter; desktop spreads advance two consecutive pages per interaction.
+  const requiredPages=20;
   await waitFor("Number(document.querySelector('.demo-page-navigation')?.dataset.pageCount)>="+String(requiredPages),"fully measured physical column count");
   const initialFlow=await evalPage("(()=>({flows:document.querySelectorAll('.demo-column-flow').length,first:(document.querySelector('.demo-column-flow')?.textContent.match(/分页标记 0000/g)||[]).length,second:(document.querySelector('.demo-column-flow')?.textContent.match(/分页标记 0001/g)||[]).length}))()");
   if(initialFlow.flows!==1||initialFlow.first!==1||initialFlow.second!==1)
@@ -290,9 +289,29 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
   if(changed.offset<1||changed.chapter!==0||!changed.transform.includes("translate3d(-"))
    throw Error("Book did not advance inside the same chapter: "+JSON.stringify(changed));
   if(width>=1000){
-   const beforeSidebar=changed.offset;
+   // Repeatedly leave and re-enter the reader through its settings control.
+   // A single sheet has a centered max width, so its source viewport must be
+   // measured in that sheet rather than the full two-page parent container.
+   const anchorRatio=changed.offset/Math.max(1,changed.count-1);
+   for(let toggle=0;toggle<5;toggle++){
+    await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-reader-actions button')].find(b=>b.textContent.includes('设置'));button.click();return true;})()");
+    await waitFor("!!document.querySelector('[role=switch][aria-label=桌面双页模式]')","reader settings for spread toggle");
+    await evalPage("document.querySelector('[role=switch][aria-label=桌面双页模式]').click();true");
+    await evalPage("(()=>{const button=[...document.querySelectorAll('button')].find(b=>b.textContent.includes('返回阅读界面'));button.click();return true;})()");
+    await waitFor("!!document.querySelector('.demo-reader')","reader after spread toggle");
+    const spread=await evalPage("(()=>{const rect=e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom};};const papers=[...document.querySelectorAll('.demo-physical-page')].map(rect);const viewport=rect(document.querySelector('.demo-flow-viewport'));let visible=false;for(const p of document.querySelectorAll('.demo-prose p')){const range=document.createRange();range.selectNodeContents(p);for(const r of range.getClientRects()){if(papers.some(paper=>r.left>=paper.left-1&&r.right<=paper.right+1&&r.top>=paper.top-1&&r.bottom<=paper.bottom+1)){visible=true;break;}}if(visible)break;}const nav=document.querySelector('.demo-page-navigation');return {papers,viewport,visible,offset:Number(nav.dataset.pageOffset),count:Number(nav.dataset.pageCount),topbar:getComputedStyle(document.querySelector('.demo-topbar')).display,strip:getComputedStyle(document.querySelector('.demo-accessibility-top')).display};})()");
+    const expected=toggle%2===0?1:2;
+    if(spread.papers.length!==expected||!spread.visible||spread.topbar!=="none"||spread.strip!=="none")
+      throw Error("Spread switch broke visible reading geometry: "+JSON.stringify({toggle,spread}));
+    if(expected===1&&(Math.abs(spread.viewport.left-spread.papers[0].left)>2||Math.abs(spread.viewport.right-spread.papers[0].right)>2))
+      throw Error("Single-page text viewport is not aligned to its paper: "+JSON.stringify({toggle,spread}));
+    const afterRatio=spread.offset/Math.max(1,spread.count-1);
+    if(Math.abs(afterRatio-anchorRatio)>.2)
+      throw Error("Spread switch lost the chapter reading position: "+JSON.stringify({toggle,anchorRatio,afterRatio,spread}));
+   }
+   const beforeSidebar=await evalPage("Number(document.querySelector('.demo-page-navigation')?.dataset.pageOffset)");
    await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-reader-actions button')].find(b=>b.textContent.includes('批注'));button.click();return true;})()");
-   await waitFor("[...document.querySelectorAll('.demo-reader-actions button')].some(b=>b.textContent.includes('批注')&&b.getAttribute('aria-pressed')==='false')","annotation sidebar toggle");
+   await waitFor("[...document.querySelectorAll('.demo-reader-actions button')].some(b=>b.textContent.includes('批注')&&b.getAttribute('aria-pressed')==='true')","floating annotation panel toggle");
    const afterSidebar=await evalPage("(()=>{const nav=document.querySelector('.demo-page-navigation');return {offset:Number(nav.dataset.pageOffset),flows:document.querySelectorAll('.demo-column-flow').length,overflow:document.documentElement.scrollWidth>innerWidth+4};})()");
    if(afterSidebar.offset!==beforeSidebar||afterSidebar.flows!==1||afterSidebar.overflow)
     throw Error("Sidebar resize broke pagination: "+JSON.stringify({beforeSidebar,afterSidebar}));
@@ -325,7 +344,7 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
    throw Error("Restored progress changed after opening the saved book: "+JSON.stringify({persistedOffset,restoreStart}),{cause:error});
   }
   const keyboardStart=persistedOffset;
-  const keyboardStride=width>=1000?2:1;
+  const keyboardStride=await evalPage("document.querySelectorAll('.demo-physical-page').length");
   await send("Input.dispatchKeyEvent",{type:"keyDown",key:"ArrowLeft",code:"ArrowLeft",windowsVirtualKeyCode:37},sessionId);
   await send("Input.dispatchKeyEvent",{type:"keyUp",key:"ArrowLeft",code:"ArrowLeft",windowsVirtualKeyCode:37},sessionId);
   await waitFor("Number(document.querySelector('.demo-page-navigation')?.dataset.pageOffset)==="+String(keyboardStart-keyboardStride),"keyboard previous page");

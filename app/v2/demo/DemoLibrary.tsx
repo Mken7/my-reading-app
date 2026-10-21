@@ -267,6 +267,8 @@ export function DemoLibrary() {
   const pageOffsetRef=useRef(0);
   const pageCountRef=useRef(1);
   const visiblePagesRef=useRef<1|2>(1);
+  const layoutFrameRef=useRef<{key:string;signature:string}|null>(null);
+  const pendingReflowAnchorRef=useRef<{key:string;ratio:number}|null>(null);
   const jumpToChapterEnd=useRef(false);
   const [kind,setKind] = useState<string>("全部");
   const [search,setSearch] = useState("");
@@ -403,6 +405,17 @@ export function DemoLibrary() {
   visiblePagesRef.current=visiblePages;
   const pageKey=book.id+":"+safeChapterIndex;
 
+  // A page number belongs to one measured column width. Keep a chapter-local
+  // source position before a reflow, then translate it to the new page count.
+  function preserveReflowAnchor(){
+    const total=pageCountRef.current;
+    if(total<2)return;
+    pendingReflowAnchorRef.current={
+      key:pageKey,
+      ratio:Math.min(1,Math.max(0,pageOffsetRef.current/Math.max(1,total-1))),
+    };
+  }
+
   // CSS columns use the browser's own line wrapping. A physical page has a
   // fixed text viewport, so long PDF/EPUB/TXT chunks continue on later pages
   // rather than extending the document vertically or losing trailing lines.
@@ -424,6 +437,16 @@ export function DemoLibrary() {
       const pageStep=Math.max(1,secondRect
         ?secondRect.left-firstRect.left
         :pageWidth);
+      const signature=[Math.round(pageWidth),Math.round(firstRect.height),second?2:1].join(":");
+      const previous=layoutFrameRef.current;
+      if(previous?.key===pageKey&&previous.signature!==signature&&pageCountRef.current>1){
+        pendingReflowAnchorRef.current={
+          key:pageKey,
+          ratio:Math.min(1,Math.max(0,pageOffsetRef.current/Math.max(1,pageCountRef.current-1))),
+        };
+      }
+      else if(previous?.key!==pageKey)pendingReflowAnchorRef.current=null;
+      layoutFrameRef.current={key:pageKey,signature};
       setFlowLayout({
         contentWidth:Math.max(1,Math.round(pageWidth-pageInset*2)),
         pageStep:Math.round(pageStep),
@@ -436,7 +459,7 @@ export function DemoLibrary() {
     observer.observe(pages);
     window.addEventListener("resize",measure);
     return()=>{observer.disconnect();window.removeEventListener("resize",measure);};
-  },[screen,book.id,safeChapterIndex,doublePage]);
+  },[screen,book.id,safeChapterIndex,doublePage,pageKey]);
   useLayoutEffect(()=>{
     if(screen!=="reader"||!flowLayout.pageStep||!flowRef.current)return;
     setPaginationReady(false);
@@ -465,10 +488,18 @@ export function DemoLibrary() {
       pageCountRef.current=total;
       setPageCount(total);
       const lastStart=Math.floor((total-1)/visiblePages)*visiblePages;
+      const reflowAnchor=pendingReflowAnchorRef.current;
       if(jumpToChapterEnd.current){
         jumpToChapterEnd.current=false;
         pageOffsetRef.current=lastStart;
         setPageOffset(lastStart);
+      }else if(reflowAnchor?.key===pageKey){
+        pendingReflowAnchorRef.current=null;
+        const target=Math.round(reflowAnchor.ratio*Math.max(0,total-1));
+        const normalized=Math.min(Math.floor(target/visiblePages)*visiblePages,lastStart);
+        pageOffsetRef.current=normalized;
+        setPageOffset(normalized);
+        setPageProgress(old=>({...old,[pageKey]:normalized}));
       }else{
         setPageOffset(offset=>{
           const normalized=Math.min(
@@ -486,7 +517,7 @@ export function DemoLibrary() {
       cancelAnimationFrame(frame);
       if(measureFrame!==undefined)cancelAnimationFrame(measureFrame);
     };
-  },[screen,book.id,safeChapterIndex,flowLayout,fontSize,visiblePages]);
+  },[screen,book.id,safeChapterIndex,flowLayout,fontSize,visiblePages,pageKey]);
   function turnPage(delta:-1|1){
     if(!paginationReady)return;
     const stride=visiblePagesRef.current;
@@ -1166,14 +1197,14 @@ export function DemoLibrary() {
             <div className="demo-settings-row"><div><h2>正文字号</h2><p>调节到读起来最舒服的大小。</p></div>
               <label className="demo-font-slider">
                 <input type="range" min="16" max="24" step="1" value={fontSize}
-                  onChange={event=>setFontSize(Number(event.target.value))} aria-label="正文字号"/>
+                  onChange={event=>{preserveReflowAnchor();setFontSize(Number(event.target.value));}} aria-label="正文字号"/>
                 <strong>{fontSize}px</strong>
               </label>
             </div>
             <div className="demo-settings-row"><div><h2>桌面双页</h2><p>宽屏像纸质书一样显示连续两页。点击左右翻页，不需要纵向滚动。</p></div>
               <button type="button" className={"demo-toggle"+(doublePage?" demo-toggle-on":"")}
                 role="switch" aria-checked={doublePage} aria-label="桌面双页模式"
-                onClick={()=>setDoublePage(x=>!x)}><span/></button>
+                onClick={()=>{preserveReflowAnchor();setDoublePage(x=>!x);}}><span/></button>
             </div>
             <div className="demo-settings-row"><div><h2>导出本地备份</h2>
               <p>把书签、导入文字、批注和设置保存为明文 JSON。请勿在公用设备存储敏感文字。</p></div>

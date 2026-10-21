@@ -455,20 +455,33 @@
 .demo-page-navigation {flex:0 0 auto;}
 .demo-reader-progress {width:min(47%,330px);max-width:330px;}
 @media (min-width:1000px) {
+  /* The reader has its own compact toolbar.  Once it is open, retaining the
+   * preview strip and workspace header wastes a sixth of a laptop viewport
+   * and makes the paper height depend on unrelated chrome. */
   .demo-outer:has(.demo-reader) {overflow-y:hidden;}
-  .demo-app:has(.demo-reader) {height:calc(100dvh - 38px);min-height:0;overflow:hidden;}
+  .demo-outer:has(.demo-reader) .demo-accessibility-top,
+  .demo-reading-mode .demo-topbar {display:none;}
+  .demo-app:has(.demo-reader) {height:100dvh;min-height:0;overflow:hidden;}
   .demo-reading-mode {grid-template-columns:minmax(0,1fr);}
   .demo-reading-mode .demo-sidebar {display:none;}
   .demo-workspace:has(.demo-reader) {height:100%;min-height:0;overflow:hidden;}
   .demo-reader {display:flex;flex-direction:column;min-height:0;padding-bottom:10px;}
-  .demo-reader-toolbar {flex:0 0 auto;padding-top:13px;padding-bottom:13px;}
+  .demo-reader-toolbar {flex:0 0 auto;padding-top:8px;padding-bottom:8px;}
   .demo-reading-layout {display:flex;flex:1;min-height:0;align-items:stretch;}
   .demo-book-column {display:flex;flex:1;flex-direction:column;min-height:0;}
   .demo-pages {flex:1;min-height:0;}
+  /* In a single-page spread the physical sheet is max-width constrained and
+   * centered.  The continuous column viewport must share that exact frame;
+   * otherwise its first column starts at the wide parent edge and visibly
+   * leaks beyond both sides of the sheet. */
+  .demo-pages:not(.demo-pages-spread) .demo-flow-viewport {
+    left:50%;right:auto;width:min(100%,880px);transform:translateX(-50%);
+  }
   .demo-physical-page {height:100%;min-height:0;padding-top:22px;padding-bottom:15px;}
   .demo-flow-viewport {inset:44px 0 39px;}
   .demo-annotation-aside {min-height:0;overflow-y:auto;overscroll-behavior:contain;}
-  .demo-page-navigation {padding:10px 4px;}
+  .demo-page-navigation {padding:6px 4px;}
+  .demo-progress-label {margin-top:4px;}
   .demo-global-footer {display:none;}
 }
 @media (max-width:999px) {
