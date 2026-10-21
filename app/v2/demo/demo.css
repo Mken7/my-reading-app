@@ -197,9 +197,9 @@
 }
 .demo-icon-action span {font-size:11px;}
 .demo-icon-action:hover,.demo-icon-selected {background:#e8eee7;color:#46654d;}
-.demo-reading-layout {display:grid;grid-template-columns:minmax(0,1fr) 270px;gap:18px;align-items:start;}
+.demo-reading-layout {display:block;min-width:0;}
 .demo-book-column {min-width:0;}
-.demo-pages {display:grid;grid-template-columns:minmax(0,1fr);gap:2px;box-shadow:0 10px 40px rgba(54,55,48,.06);}
+.demo-pages {display:grid;grid-template-columns:minmax(0,1fr);gap:2px;position:relative;overflow:hidden;box-shadow:0 10px 40px rgba(54,55,48,.06);}
 .demo-pages-spread:has(.demo-paper-page-next) {grid-template-columns:repeat(2,minmax(0,1fr));}
 .demo-paper-page {
   background:var(--demo-card);color:var(--demo-ink);min-width:0;min-height:620px;
@@ -211,7 +211,7 @@
 .demo-chapter-ornament {font-size:25px;color:#b5ab8f;text-align:center;margin-bottom:9px;font-family:Georgia,serif;}
 .demo-chapter-kicker {text-align:center;color:var(--demo-muted);font-size:10px;letter-spacing:.18em;}
 .demo-chapter-name {font:500 clamp(27px,2.5vw,35px)/1.5 "Songti SC","STSong",serif;text-align:center;letter-spacing:.14em;margin:15px 0 31px;}
-.demo-prose {font-family:"Songti SC","STSong","Noto Serif CJK SC",serif;line-height:2.12;letter-spacing:.055em;font-weight:400;overflow-wrap:anywhere;}
+.demo-prose {font-family:"Songti SC","STSong","Noto Serif CJK SC",serif;line-height:2.12;letter-spacing:.055em;font-weight:400;overflow-wrap:normal;word-break:normal;line-break:strict;}
 .demo-prose p {text-indent:2em;margin:0 0 1.25em;text-align:justify;}
 .demo-quoted-mark {
   display:inline;background:linear-gradient(transparent 72%,#d4e6c8 72%,#d4e6c8 96%,transparent 96%);
@@ -253,11 +253,11 @@
 .demo-note-compose button {background:#466b55;color:white;border:0;border-radius:7px;padding:9px 11px;font-size:11px;}
 .demo-aside-warning {font-size:10px;line-height:1.7;color:var(--demo-muted);margin-top:16px;}
 .demo-empty-notes {font-size:12px;color:var(--demo-muted);}
-.demo-toc {background:var(--demo-card);border:1px solid var(--demo-line);border-radius:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:14px;margin-bottom:16px;}
+.demo-toc {background:var(--demo-card);border:1px solid var(--demo-line);border-radius:12px;padding:14px;}
 .demo-toc>div {margin-right:auto;}
 .demo-toc>div strong {font-size:12px;}
 .demo-toc>div span {display:block;font-size:9px;letter-spacing:.1em;color:var(--demo-muted);}
-.demo-toc button {background:transparent;border:1px solid var(--demo-line);border-radius:7px;color:var(--demo-ink);padding:9px 12px;font-size:11px;}
+.demo-toc button {background:transparent;border:1px solid var(--demo-line);border-radius:7px;color:var(--demo-ink);padding:9px 12px;font-size:11px;text-align:left;}
 .demo-toc button>span {font-family:Georgia,serif;color:var(--demo-muted);margin-right:4px;}
 .demo-toc .demo-toc-active {background:#deeadc;color:#425a45;border-color:#b9ceb9;}
 .demo-notice {
@@ -348,8 +348,6 @@
   .demo-section-top {flex-wrap:wrap;align-items:start;margin-top:34px;}
   .demo-search input {width:min(75vw,250px);}
   .demo-book-grid {grid-template-columns:repeat(2,minmax(0,1fr));}
-  .demo-pages-spread:has(.demo-paper-page-next) {grid-template-columns:minmax(0,1fr);}
-  .demo-paper-page-next {display:none;}
   .demo-reading-layout {display:block;}
   .demo-paper-page {min-height:580px;padding:41px 25px 26px;}
   .demo-annotation-aside {margin-top:20px;}
@@ -406,10 +404,16 @@
 .demo-prose {position:relative;z-index:1;user-select:text;-webkit-user-select:text;}
 .demo-ink-layer {position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none;overflow:visible;}
 .demo-ink-layer.demo-ink-active {pointer-events:auto;touch-action:none;cursor:crosshair;}
-.demo-selection-toolbar,.demo-drawing-help {margin:10px 0 20px;display:flex;align-items:center;flex-wrap:wrap;gap:11px;padding:13px 16px;background:var(--demo-panel);color:var(--demo-ink);border:1px solid var(--demo-line);border-radius:12px;font-size:12px;}
+.demo-reader-panel,.demo-selection-toolbar,.demo-drawing-help {position:fixed;z-index:40;background:var(--demo-panel);color:var(--demo-ink);border:1px solid var(--demo-line);box-shadow:0 14px 38px #29302629;}
+.demo-reader-panel {top:88px;right:clamp(16px,3vw,46px);width:min(360px,calc(100vw - 32px));max-height:calc(100dvh - 165px);border-radius:13px;overflow:hidden;}
+.demo-panel-heading {display:flex;align-items:flex-start;gap:14px;justify-content:space-between;}
+.demo-panel-heading>div {min-width:0;}
+.demo-panel-close {border:0;background:transparent;color:var(--demo-muted);font-size:25px;line-height:1;padding:0 2px;}
+.demo-panel-scroll {display:grid;gap:8px;max-height:calc(100dvh - 250px);overflow-y:auto;overscroll-behavior:contain;padding-top:14px;}
+.demo-selection-toolbar,.demo-drawing-help {top:94px;left:50%;transform:translateX(-50%);width:min(680px,calc(100vw - 32px));display:flex;align-items:center;flex-wrap:wrap;gap:9px;padding:11px 14px;border-radius:12px;font-size:12px;}
 .demo-selection-toolbar>span {flex:1;min-width:140px;overflow-wrap:anywhere;}
 .demo-selection-toolbar button,.demo-drawing-help button {border:1px solid var(--demo-line);background:var(--demo-card);border-radius:9px;padding:9px 11px;min-height:42px;color:var(--demo-forest);}
-.demo-drawing-help button:first-of-type {margin-left:auto;}
+.demo-tool-selected {background:#deeadc!important;border-color:#b9ceb9!important;}
 .demo-reply-row {margin-top:12px;display:flex;gap:6px;align-items:center;}
 .demo-reply-row input {min-width:0;flex:1;padding:9px;border:1px solid var(--demo-line);border-radius:8px;background:var(--demo-card);color:var(--demo-ink);font-size:12px;}
 .demo-reply-row button {padding:9px 10px;min-height:42px;border:1px solid var(--demo-line);border-radius:8px;background:var(--demo-panel);color:var(--demo-forest);font-size:12px;}
@@ -429,24 +433,27 @@
 }
 
 
-/* Physical book pagination: the browser flows text across horizontal CSS
- * columns sized to the measured paper. Only the current one/two columns are
- * visible. Reading is controlled by page arrows, not the document scrollbar. */
+/* Physical book pagination: one source DOM flow is fragmented into horizontal
+ * CSS columns sized to a paper's content area. The page cards are only paper
+ * frames; they never receive duplicate copies of a chapter. The clipped area
+ * is therefore the next column in the same continuous flow, not discarded
+ * overflow. Reading remains arrow-controlled rather than document-scrolled. */
 .demo-physical-page {height:clamp(390px,68dvh,730px);min-height:0;overflow:hidden;}
-.demo-flow-viewport {flex:1;min-height:0;width:100%;overflow:hidden;position:relative;}
-.demo-column-flow {height:100%;width:100%;column-count:1;column-gap:0;column-fill:auto;
-  overflow:visible;will-change:transform;}
+.demo-flow-viewport {position:absolute;inset:22px 0 42px;min-height:0;overflow:hidden;z-index:1;}
+.demo-column-flow {height:100%;min-height:0;column-fill:auto;overflow:visible;will-change:transform;}
 .demo-column-flow .demo-chapter-ornament {margin-top:4px;}
 .demo-column-flow .demo-prose {line-height:1.85;letter-spacing:.035em;}
 .demo-column-flow .demo-prose p {break-inside:auto;}
 .demo-physical-page .demo-paper-footer {flex:0 0 auto;margin-top:0;padding-top:12px;}
-.demo-blank-facing-page {background:var(--demo-card);border:1px solid var(--demo-line);}
+.demo-paper-page-blank .demo-paper-footer {visibility:hidden;}
 .demo-reader-back h1 {max-width:clamp(180px,32vw,550px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .demo-page-navigation {flex:0 0 auto;}
 .demo-reader-progress {width:min(47%,330px);max-width:330px;}
 @media (min-width:1000px) {
   .demo-outer:has(.demo-reader) {overflow-y:hidden;}
   .demo-app:has(.demo-reader) {height:calc(100dvh - 38px);min-height:0;overflow:hidden;}
+  .demo-reading-mode {grid-template-columns:minmax(0,1fr);}
+  .demo-reading-mode .demo-sidebar {display:none;}
   .demo-workspace:has(.demo-reader) {height:100%;min-height:0;overflow:hidden;}
   .demo-reader {display:flex;flex-direction:column;min-height:0;padding-bottom:10px;}
   .demo-reader-toolbar {flex:0 0 auto;padding-top:13px;padding-bottom:13px;}
@@ -454,7 +461,8 @@
   .demo-book-column {display:flex;flex-direction:column;min-height:0;}
   .demo-pages {flex:1;min-height:0;}
   .demo-physical-page {height:100%;min-height:0;padding-top:22px;padding-bottom:15px;}
-  .demo-annotation-aside {min-height:0;max-height:100%;overflow-y:auto;overscroll-behavior:contain;}
+  .demo-flow-viewport {inset:22px 0 39px;}
+  .demo-annotation-aside {min-height:0;overflow-y:auto;overscroll-behavior:contain;}
   .demo-page-navigation {padding:10px 4px;}
   .demo-global-footer {display:none;}
 }
@@ -465,4 +473,6 @@
   .demo-physical-page {height:clamp(340px,63dvh,600px);min-height:0;}
   .demo-reader-back h1 {max-width:210px;}
   .demo-reader-progress {width:50%;}
+  .demo-reader-panel {top:auto;bottom:74px;right:16px;max-height:calc(100dvh - 155px);}
+  .demo-selection-toolbar,.demo-drawing-help {top:auto;bottom:72px;max-height:calc(100dvh - 160px);overflow-y:auto;}
 }

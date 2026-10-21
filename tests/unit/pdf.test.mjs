@@ -8,13 +8,13 @@ test("PDF local importer rejects invalid header and oversized file before parsin
   await assert.rejects(preparePdf(new Uint8Array(0)),/为空/);
 });
 
-test("PDF plain-text pages preserve Unicode codepoints and page anchors",()=>{
+test("PDF plain-text pages preserve Unicode without manufacturing a directory",()=>{
   const plan=planPdfTextPages([
     {page:1,text:"你好🐈第一章"},
     {page:2,text:"第二页内容😀"},
   ]);
   assert.equal(plan.codePoints,Array.from("你好🐈第一章\n\n第二页内容😀").length);
-  assert.equal(plan.chapters.length,2);
+  assert.equal(plan.chapters.length,0);
   assert.ok(plan.chunks[0].includes("第二页内容😀"));
 });
 

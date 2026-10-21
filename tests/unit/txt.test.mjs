@@ -31,8 +31,8 @@ test("chapter headings are limited and anchored", () => {
   const plan = prepareTxt(headings, 30);
   assert.equal(plan.chapters.length, 200);
   assert.equal(prepareTxt("这里有第一章，但不是章节标题").chapters.length, 0);
-  assert.equal(prepareTxt("CHAPTER 12 The Visit\nhello").chapters[0].title,
-    "CHAPTER 12 The Visit");
+  assert.equal(prepareTxt("CHAPTER 12 The Visit\nhello").chapters.length,0);
+  assert.equal(prepareTxt("第一章 开始\n正文\n第一章 开始\n正文").chapters.length,0);
 });
 
 test("invalid and empty TXT inputs are rejected", () => {

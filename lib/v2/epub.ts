@@ -283,20 +283,21 @@ export async function prepareEpub(bytes: Uint8Array): Promise<TxtImportPlan> {
     ? opfPath.slice(0, opfPath.lastIndexOf("/"))
     : "";
 
-  const manifest = new Map<string, { href: string; type: string }>();
+  const manifest = new Map<string, { href: string; type: string; properties: string }>();
   for (const item of byLocalName(opf, "item")) {
     const id = item.getAttribute("id");
     const href = item.getAttribute("href");
     if (id && href && !manifest.has(id)) {
-      manifest.set(id, { href, type: item.getAttribute("media-type") ?? "" });
+      manifest.set(id, { href, type: item.getAttribute("media-type") ?? "",
+        properties: item.getAttribute("properties") ?? "" });
     }
   }
   const itemrefs = byLocalName(opf, "itemref")
     .filter((item) => item.getAttribute("linear") !== "no");
   if (!itemrefs.length || itemrefs.length > 150) fail("EPUB 章节数量不受支持");
 
-  const chapters: { title: string; offset: number }[] = [];
   const parts: string[] = [];
+  const spineOffsets = new Map<string, number>();
   let offset = 0;
 
   for (const ref of itemrefs) {
@@ -312,11 +313,8 @@ export async function prepareEpub(bytes: Uint8Array): Promise<TxtImportPlan> {
     const readable = raw.replace(/\u00a0/g, " ")
       .replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
     if (!readable) continue;
-    const titleElement = byLocalName(body, "h1")[0] ?? byLocalName(body, "h2")[0];
-    const title = (titleElement?.textContent ?? "").trim().slice(0, 80)
-      || "章节 " + (parts.length + 1);
     if (parts.length) offset += 2; // joined chapters are separated by two LF.
-    chapters.push({ title, offset });
+    spineOffsets.set(path, offset);
     parts.push(readable);
     offset += Array.from(readable).length;
     if (offset > 1_000_000) fail("EPUB 正文超过测试版长度上限");
@@ -329,11 +327,35 @@ export async function prepareEpub(bytes: Uint8Array): Promise<TxtImportPlan> {
     sum += Array.from(chunk).length;
     ends.push(sum);
   }
-  return {
-    ...plan,
-    chapters: chapters.map(({ title, offset: start }) => ({
-      title,
-      chunkIndex: Math.max(0, ends.findIndex((end) => start < end)),
-    })),
-  };
+  const toChunkIndex=(start:number)=>Math.max(0,ends.findIndex((end)=>start<end));
+  const tocEntries:{title:string;offset:number}[]=[];
+  const navItem=[...manifest.values()].find(item=>/\bnav\b/i.test(item.properties));
+  const spineTocId=byLocalName(opf,"spine")[0]?.getAttribute("toc")??"";
+  const ncxItem=spineTocId?manifest.get(spineTocId):undefined;
+  if(navItem?.type==="application/xhtml+xml"){
+    const navPath=resolvePath(opfDirectory,navItem.href);
+    const navDocument=xmlDocument(await archive.readText(navPath));
+    const tocNav=byLocalName(navDocument,"nav").find(nav=>/(?:^|\s)toc(?:\s|$)/i.test(
+      nav.getAttribute("epub:type")??nav.getAttribute("type")??"")||nav.getAttribute("id")==="toc");
+    if(tocNav)for(const link of byLocalName(tocNav,"a")){
+      const title=(link.textContent??"").replace(/\s+/g," ").trim().slice(0,80);
+      const href=link.getAttribute("href")??"";
+      if(!title||!href||href.startsWith("#"))continue;
+      const target=resolvePath(navPath.includes("/")?navPath.slice(0,navPath.lastIndexOf("/")):"",href);
+      const start=spineOffsets.get(target);
+      if(start!==undefined&&!tocEntries.some(item=>item.title===title&&item.offset===start))tocEntries.push({title,offset:start});
+    }
+  }else if(ncxItem?.type==="application/x-dtbncx+xml"){
+    const ncxPath=resolvePath(opfDirectory,ncxItem.href);
+    const ncx=xmlDocument(await archive.readText(ncxPath));
+    for(const point of byLocalName(ncx,"navPoint")){
+      const title=(byLocalName(point,"navLabel")[0]?.textContent??"").replace(/\s+/g," ").trim().slice(0,80);
+      const href=byLocalName(point,"content")[0]?.getAttribute("src")??"";
+      if(!title||!href||href.startsWith("#"))continue;
+      const target=resolvePath(ncxPath.includes("/")?ncxPath.slice(0,ncxPath.lastIndexOf("/")):"",href);
+      const start=spineOffsets.get(target);
+      if(start!==undefined&&!tocEntries.some(item=>item.title===title&&item.offset===start))tocEntries.push({title,offset:start});
+    }
+  }
+  return {...plan,chapters:tocEntries.map(item=>({title:item.title,chunkIndex:toChunkIndex(item.offset)}))};
 }

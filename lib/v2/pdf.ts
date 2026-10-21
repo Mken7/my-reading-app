@@ -52,7 +52,6 @@ export function planPdfTextPages(pages:readonly PageText[]):TxtImportPlan{
   if(pages.length<1 || pages.length>MAX_PDF_PAGES)
     throw new Error("PDF 没有页面或超出 120 页上限");
   const parts:string[]=[];
-  const starts:{page:number;offset:number}[]=[];
   let offset=0;
   for(const entry of pages){
     if(!Number.isInteger(entry.page)||entry.page<1 ||
@@ -60,7 +59,6 @@ export function planPdfTextPages(pages:readonly PageText[]):TxtImportPlan{
     const clean=entry.text.replace(/\r\n?/g,"\n").replace(/\u0000/g,"").trim();
     if(!clean)continue;
     if(parts.length)offset+=2;
-    starts.push({page:entry.page,offset});
     parts.push(clean);
     offset+=Array.from(clean).length;
     if(offset>MAX_PDF_CHARACTERS)
@@ -68,18 +66,12 @@ export function planPdfTextPages(pages:readonly PageText[]):TxtImportPlan{
   }
   if(!parts.length)throw new Error("PDF 页面没有可提取文字（扫描版需 OCR，当前不支持）");
   const prepared=prepareTxt(parts.join("\n\n"));
-  const ends:number[]=[];
-  let end=0;
-  for(const chunk of prepared.chunks){
-    end+=Array.from(chunk).length;
-    ends.push(end);
-  }
+  // Extracted PDF pages are content, not a document outline. A PDF directory
+  // may only come from its actual bookmark tree; PDF.js text extraction alone
+  // cannot safely invent one.
   return {
     ...prepared,
-    chapters:starts.map(({page,offset:start})=>({
-      title:"PDF 第 "+page+" 页",
-      chunkIndex:Math.max(0,ends.findIndex(value=>start<value)),
-    })).slice(0,200),
+    chapters:[],
   };
 }
 

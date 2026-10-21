@@ -13,8 +13,19 @@ import {setTimeout as delay} from "node:timers/promises";
 const out=path.resolve("out");
 if(!fs.existsSync(path.join(out,"v2","index.html")))
  throw Error("Static V2 export missing");
+const demoOnly=process.argv.includes("--demo-only");
+const mobileOnly=process.argv.includes("--mobile-only");
+const desktopOnly=process.argv.includes("--desktop-only");
+const compactDesktop=process.argv.includes("--compact-desktop");
+if(mobileOnly&&desktopOnly)throw Error("Choose at most one offline viewport filter");
 const chrome=["google-chrome","google-chrome-stable","chromium","chromium-browser"]
- .find(name=>spawnSync("which",[name],{encoding:"utf8"}).status===0);
+ .find(name=>spawnSync("which",[name],{encoding:"utf8"}).status===0)
+ || [
+  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+ ].find(candidate=>fs.existsSync(candidate));
 if(!chrome)throw Error("Chromium is required for CDP browser test");
 
 const server=http.createServer((req,res)=>{
@@ -167,7 +178,8 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
     if(await evalPage(expression))return;
     await delay(160);
    }
-   throw Error("Demo did not reach "+label);
+    const diagnostic=await evalPage(`(()=>{const nav=document.querySelector('.demo-page-navigation');const flow=document.querySelector('.demo-column-flow');let stored={};try{stored=JSON.parse(localStorage.getItem('reading-v2-offline-ui-demo-1')||'{}').pageProgress||{};}catch{}return {pageCount:nav?.dataset.pageCount,pageOffset:nav?.dataset.pageOffset,chapter:nav?.dataset.chapter,stored,selection:getSelection()?.toString(),firstParagraph:document.querySelector('.demo-prose p')?.textContent?.slice(0,24),flowClientWidth:flow?.clientWidth,flowScrollWidth:flow?.scrollWidth,flowTransform:flow?.style.transform,flows:document.querySelectorAll('.demo-column-flow').length};})()`);
+    throw Error("Demo did not reach "+label+": "+JSON.stringify(diagnostic));
   };
   await send("Page.navigate",{url},sessionId);
   await waitFor("document.querySelector('.demo-app')?.dataset.demoReady==='yes'","hydrated bookshelf");
@@ -180,6 +192,13 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
    throw Error("Demo layout overflow: "+JSON.stringify(metrics));
   await evalPage("document.querySelector('.demo-book-card').click();true");
   await waitFor("!!document.querySelector('.demo-prose')","reader");
+  if(width>=1000){
+   await waitFor("!!document.querySelector('.demo-paper-page-next')","desktop spread layout");
+   const chapterBoundary=await evalPage("(()=>{const nav=document.querySelector('.demo-page-navigation');return {pages:Number(nav?.dataset.pageCount),flows:document.querySelectorAll('.demo-column-flow').length,headings:document.querySelectorAll('.demo-chapter-name').length,blank:!!document.querySelector('.demo-paper-page-next.demo-paper-page-blank')};})()");
+   if(chapterBoundary.flows!==1||chapterBoundary.headings!==1||
+      (chapterBoundary.pages===1&&!chapterBoundary.blank))
+    throw Error("Desktop chapter boundary duplicated or pre-read its next chapter: "+JSON.stringify(chapterBoundary));
+  }
   await evalPage("document.querySelector('.demo-reader-actions .demo-icon-action').click();true");
   await waitFor("!!document.querySelector('.demo-icon-selected')","bookmark toggle");
 
@@ -236,27 +255,88 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
   // into physical pages rather than expanding the paper and desktop scrollbar.
   await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-menu-item')].find(b=>b.textContent.includes('我的书架'));button.click();return true;})()");
   await waitFor("!!document.querySelector('.demo-file-input')","return to bookshelf");
-  await evalPage("(()=>{const text=('这是用于分页回归的原创测试文字。它需要在固定纸面内连续换行，下一页必须保留全部内容，而不能让阅读者一直向下滚动。\\n\\n').repeat(85);const input=document.querySelector('.demo-file-input');const dt=new DataTransfer();dt.items.add(new File([text],'长文本翻页测试.txt',{type:'text/plain'}));input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));return true;})()");
+  await evalPage("(()=>{const text=Array.from({length:1050},(_,i)=>'分页标记 '+String(i).padStart(4,'0')+'：这是用于分页回归的原创测试文字。它必须在固定纸面内连续换行，下一页必须紧接上一页，不能重复、跳段、裁切或改为纵向滚动。').join('\\n\\n');const input=document.querySelector('.demo-file-input');const dt=new DataTransfer();dt.items.add(new File([text],'长文本翻页测试.txt',{type:'text/plain'}));input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));return true;})()");
   await waitFor("document.querySelector('.demo-reader-back h1')?.textContent==='长文本翻页测试'","long TXT book import");
   await waitFor("(()=>{const flow=document.querySelector('.demo-column-flow');const label=document.querySelector('.demo-progress-label');return flow&&flow.clientWidth>0&&flow.scrollWidth>flow.clientWidth*1.7&&label?.textContent.includes('页');})()","actual multi-column book pagination");
-  await waitFor("Number(document.querySelector('.demo-page-navigation')?.dataset.pageCount)>=3","fully measured multi-page column count");
+  // Imports retain immutable 2,800-code-point chapters. At a tall desktop
+  // viewport that is naturally fewer physical pages; the compact desktop and
+  // mobile cases still exercise a full twenty-page sequence in one chapter.
+  const requiredPages=width>=1000&&height>700?15:20;
+  await waitFor("Number(document.querySelector('.demo-page-navigation')?.dataset.pageCount)>="+String(requiredPages),"fully measured physical column count");
+  const initialFlow=await evalPage("(()=>({flows:document.querySelectorAll('.demo-column-flow').length,first:(document.querySelector('.demo-column-flow')?.textContent.match(/分页标记 0000/g)||[]).length,second:(document.querySelector('.demo-column-flow')?.textContent.match(/分页标记 0001/g)||[]).length}))()");
+  if(initialFlow.flows!==1||initialFlow.first!==1||initialFlow.second!==1)
+   throw Error("Reader rendered duplicate paragraph sources: "+JSON.stringify(initialFlow));
   const oldLabel=await evalPage("document.querySelector('.demo-progress-label').textContent");
   const beforeLayout=await evalPage("(()=>{const page=document.querySelector('.demo-physical-page');const flow=document.querySelector('.demo-column-flow');return {pageHeight:page.clientHeight,textHeight:flow.clientHeight,paperOverflow:getComputedStyle(page).overflow,desktopOverflow:getComputedStyle(document.querySelector('.demo-outer')).overflowY};})()");
   if(beforeLayout.textHeight>beforeLayout.pageHeight||beforeLayout.paperOverflow!=="hidden")
    throw Error("Page exceeded fixed paper height: "+JSON.stringify(beforeLayout));
   if(width>=1000&&beforeLayout.desktopOverflow!=="hidden")
    throw Error("Desktop reader still uses vertical scrolling: "+JSON.stringify(beforeLayout));
-  await evalPage("document.querySelector('.demo-page-navigation button:last-child').click();true");
+  // Page zero is already visible when the imported chapter opens. Desktop
+  // advances through two consecutive pages per interaction.
+  const pageTurns=Math.floor((requiredPages-1)/(width>=1000?2:1));
+  for(let turn=0;turn<pageTurns;turn++){
+   const beforeTurn=await evalPage("(()=>{const nav=document.querySelector('.demo-page-navigation');return {offset:Number(nav.dataset.pageOffset),chapter:Number(nav.dataset.chapter),transform:document.querySelector('.demo-column-flow').style.transform};})()");
+   await evalPage("document.querySelector('.demo-page-navigation button:last-child').click();true");
+   await waitFor("Number(document.querySelector('.demo-page-navigation')?.dataset.pageOffset)>"+String(beforeTurn.offset),"continuous physical page "+String(turn+1));
+   const afterTurn=await evalPage("(()=>{const nav=document.querySelector('.demo-page-navigation');return {offset:Number(nav.dataset.pageOffset),chapter:Number(nav.dataset.chapter),transform:document.querySelector('.demo-column-flow').style.transform,flows:document.querySelectorAll('.demo-column-flow').length};})()");
+   const stride=width>=1000?2:1;
+   if(afterTurn.offset!==beforeTurn.offset+stride||afterTurn.chapter!==beforeTurn.chapter||
+      afterTurn.transform===beforeTurn.transform||afterTurn.flows!==1)
+    throw Error("Non-continuous reader turn "+String(turn+1)+": "+JSON.stringify({beforeTurn,afterTurn,stride}));
+  }
   await waitFor("document.querySelector('.demo-progress-label')?.textContent!=="+JSON.stringify(oldLabel),"physical page advance without chapter jump");
   const changed=await evalPage("(()=>{const nav=document.querySelector('.demo-page-navigation');return {offset:Number(nav.dataset.pageOffset),chapter:Number(nav.dataset.chapter),count:Number(nav.dataset.pageCount),transform:document.querySelector('.demo-column-flow').style.transform};})()");
   if(changed.offset<1||changed.chapter!==0||!changed.transform.includes("translate3d(-"))
    throw Error("Book did not advance inside the same chapter: "+JSON.stringify(changed));
+  if(width>=1000){
+   const beforeSidebar=changed.offset;
+   await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-reader-actions button')].find(b=>b.textContent.includes('批注'));button.click();return true;})()");
+   await waitFor("[...document.querySelectorAll('.demo-reader-actions button')].some(b=>b.textContent.includes('批注')&&b.getAttribute('aria-pressed')==='false')","annotation sidebar toggle");
+   const afterSidebar=await evalPage("(()=>{const nav=document.querySelector('.demo-page-navigation');return {offset:Number(nav.dataset.pageOffset),flows:document.querySelectorAll('.demo-column-flow').length,overflow:document.documentElement.scrollWidth>innerWidth+4};})()");
+   if(afterSidebar.offset!==beforeSidebar||afterSidebar.flows!==1||afterSidebar.overflow)
+    throw Error("Sidebar resize broke pagination: "+JSON.stringify({beforeSidebar,afterSidebar}));
+   await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-reader-actions button')].find(b=>b.textContent.includes('批注'));button.click();return true;})()");
+   await send("Emulation.setDeviceMetricsOverride",{
+    width:1160,height,deviceScaleFactor:1,mobile:false,
+   },sessionId);
+   await waitFor("innerWidth===1160&&document.querySelectorAll('.demo-column-flow').length===1","live desktop resize");
+   const resized=await evalPage("(()=>{const nav=document.querySelector('.demo-page-navigation');const flow=document.querySelector('.demo-column-flow');return {offset:Number(nav?.dataset.pageOffset),count:Number(nav?.dataset.pageCount),flows:document.querySelectorAll('.demo-column-flow').length,first:(flow?.textContent.match(/分页标记 0000/g)||[]).length,overflow:document.documentElement.scrollWidth>innerWidth+4};})()");
+   if(resized.offset<0||resized.offset>=resized.count||resized.flows!==1||resized.first!==1||resized.overflow)
+    throw Error("Live window resize broke the continuous spread: "+JSON.stringify(resized));
+   await send("Emulation.setDeviceMetricsOverride",{
+    width,height,deviceScaleFactor:1,mobile:false,
+   },sessionId);
+   await waitFor("innerWidth==="+String(width)+"&&document.querySelectorAll('.demo-column-flow').length===1","restored desktop viewport");
+  }
+  // The physical-page cursor is local state, not a visual transform alone:
+  // after a reload it must return to the same continuous page sequence.
+  const persistedOffset=changed.offset;
+  await delay(600);
+  await waitFor("(()=>{try{const stored=JSON.parse(localStorage.getItem('reading-v2-offline-ui-demo-1')||'{}');return Object.values(stored.pageProgress||{}).includes("+String(persistedOffset)+");}catch{return false;}})()","persisted physical reading progress");
+  await send("Page.reload",{ignoreCache:true},sessionId);
+  await waitFor("document.querySelector('.demo-app')?.dataset.demoReady==='yes'&&!!document.querySelector('.demo-book-card')","reader progress reload");
+  await evalPage("(()=>{const card=[...document.querySelectorAll('.demo-book-card')].find(el=>el.textContent.includes('长文本翻页测试'));card?.click();return true;})()");
+  await delay(250);
+  const restoreStart=await evalPage("(()=>{const nav=document.querySelector('.demo-page-navigation');return {offset:nav?.dataset.pageOffset,count:nav?.dataset.pageCount,saved:nav?.dataset.savedPage,disabled:document.querySelector('.demo-page-navigation button:last-child')?.disabled};})()");
+  try{
+   await waitFor("(()=>{const nav=document.querySelector('.demo-page-navigation');return Number(nav?.dataset.pageOffset)==="+String(persistedOffset)+"&&Number(nav?.dataset.pageCount)>"+String(persistedOffset)+"&&!document.querySelector('.demo-page-navigation button:last-child')?.disabled;})()","restored continuous reading progress after pagination measurement");
+  }catch(error){
+   throw Error("Restored progress changed after opening the saved book: "+JSON.stringify({persistedOffset,restoreStart}),{cause:error});
+  }
+  const keyboardStart=persistedOffset;
+  const keyboardStride=width>=1000?2:1;
   await send("Input.dispatchKeyEvent",{type:"keyDown",key:"ArrowLeft",code:"ArrowLeft",windowsVirtualKeyCode:37},sessionId);
   await send("Input.dispatchKeyEvent",{type:"keyUp",key:"ArrowLeft",code:"ArrowLeft",windowsVirtualKeyCode:37},sessionId);
-  await waitFor("Number(document.querySelector('.demo-page-navigation')?.dataset.pageOffset)===0","keyboard previous page");
+  await waitFor("Number(document.querySelector('.demo-page-navigation')?.dataset.pageOffset)==="+String(keyboardStart-keyboardStride),"keyboard previous page");
+  const afterKeyboardLeft=await evalPage("Number(document.querySelector('.demo-page-navigation')?.dataset.pageOffset)");
   await send("Input.dispatchKeyEvent",{type:"keyDown",key:"ArrowRight",code:"ArrowRight",windowsVirtualKeyCode:39},sessionId);
   await send("Input.dispatchKeyEvent",{type:"keyUp",key:"ArrowRight",code:"ArrowRight",windowsVirtualKeyCode:39},sessionId);
-  await waitFor("Number(document.querySelector('.demo-page-navigation')?.dataset.pageOffset)>0","keyboard next page");
+  try{
+   await waitFor("Number(document.querySelector('.demo-page-navigation')?.dataset.pageOffset)==="+String(keyboardStart),"keyboard next page");
+  }catch(error){
+   throw Error("Keyboard page sequence failed: "+JSON.stringify({keyboardStart,keyboardStride,afterKeyboardLeft}),{cause:error});
+  }
   await evalPage("document.querySelector('button[title*=书签]').click();true");
   await waitFor("document.querySelector('button[title*=书签]')?.getAttribute('aria-pressed')==='true'","physical page bookmark");
   const savedPage=await evalPage("Number(document.querySelector('.demo-page-navigation').dataset.pageOffset)");
@@ -277,12 +357,14 @@ try{
  const url="http://127.0.0.1:"+addr.port+"/my-reading-app/v2/";
  browser=launch(chrome);
  protocol=await openProtocol(await browser.endpoint);
- await inspect(protocol.send,url,390,844,true);
- await inspect(protocol.send,url,430,932,true);
- await inspect(protocol.send,url,768,1024,false);
- await inspect(protocol.send,url,1280,900,false);
- await inspectOfflineDemo(protocol.send,url+"demo/",390,844,true);
- await inspectOfflineDemo(protocol.send,url+"demo/",1280,900,false);
+ if(!demoOnly){
+  await inspect(protocol.send,url,390,844,true);
+  await inspect(protocol.send,url,430,932,true);
+  await inspect(protocol.send,url,768,1024,false);
+  await inspect(protocol.send,url,1280,900,false);
+ }
+  if(!desktopOnly)await inspectOfflineDemo(protocol.send,url+"demo/",390,844,true);
+  if(!mobileOnly)await inspectOfflineDemo(protocol.send,url+"demo/",1280,compactDesktop?620:900,false);
 }finally{
  protocol?.close();
  browser?.child.kill();

@@ -71,24 +71,27 @@ export function prepareTxt(text: string, maxCodePoints = 2800): TxtImportPlan {
     }
   }
 
-  const chapters: TxtChapter[] = [];
+  const candidates: { title: string; offset: number }[] = [];
+  // TXT has no navigation metadata. Treat a directory as present only when
+  // multiple, unique, standalone headings form an explicit structure; a lone
+  // phrase such as “第一章” in body text must never manufacture a TOC.
+  const heading = /^(?:第[零〇一二三四五六七八九十百千万亿0-9]+[章节回卷部篇](?:\s*[-—:：、.]?\s*[^\n]+)?|chapter\s+[0-9]+(?:\s*[-—:：.]?\s*[^\n]+)?)$/iu;
   let offset = 0;
-  let chunkIndex = 0;
 
   for (const line of normalized.split("\n")) {
     const name = line.trim();
-    if (name.length > 0 && name.length <= 80 &&
-        (/^第[零〇一二三四五六七八九十百千万亿0-9]+[章节回卷部篇]/u.test(name) ||
-         /^chapter\s+[0-9]+\b/iu.test(name))) {
-      while (chunkIndex < ends.length - 1 && offset >= ends[chunkIndex]) {
-        chunkIndex++;
-      }
-      if (chapters.length < 200) {
-        chapters.push({ title: name, chunkIndex });
-      }
+    if (name.length > 0 && name.length <= 80 && heading.test(name) && candidates.length < 200) {
+      candidates.push({ title: name, offset });
     }
     offset += Array.from(line).length + 1;
   }
+
+  const isReliable=candidates.length>=2&&new Set(candidates.map(item=>item.title)).size===candidates.length;
+  const chapters: TxtChapter[] = !isReliable ? [] : candidates.map(item=>{
+    let chunkIndex=0;
+    while(chunkIndex<ends.length-1&&item.offset>=ends[chunkIndex])chunkIndex++;
+    return {title:item.title,chunkIndex};
+  });
 
   return { chunks, chapters, codePoints: points.length };
 }

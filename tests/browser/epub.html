@@ -76,7 +76,7 @@ function file(extra=[]){
 }
 try{
   const plan=await prepareEpub(file());
-  if(plan.chapters.length!==2 || !plan.chunks.join("").includes("第一段中文🐈") ||
+  if(plan.chapters.length!==0 || !plan.chunks.join("").includes("第一段中文🐈") ||
      !plan.chunks.join("").includes("第二段😀") ||
      plan.chunks.join("").includes("window.epubExecuted") ||
      window.epubExecuted){

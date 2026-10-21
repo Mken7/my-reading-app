@@ -22,6 +22,8 @@ type DemoBook = {
   color: string;
   initials: string;
   chapters: Chapter[];
+  /** Only source-provided, verified navigation entries belong here. */
+  toc?: {title:string;chapterIndex:number}[];
   imported?: boolean;
 };
 type DemoNote = {
@@ -34,12 +36,32 @@ type DemoNote = {
   replies?: {id:string;content:string}[];
 };
 type Stroke={id:string;bookId:string;chapterIndex:number;page?:number;points:{x:number;y:number}[]};
-type Selection={quote:string;chapterIndex:number};
-type Marking={id:string;bookId:string;chapterIndex:number;quote:string};
+type TextRange={paragraphIndex:number;start:number;end:number};
+type Selection={quote:string;chapterIndex:number;ranges:TextRange[]};
+/** `quote` is retained for v1 local-storage compatibility. New markings use text ranges. */
+type Marking={id:string;bookId:string;chapterIndex:number;quote:string;ranges?:TextRange[]};
+type StrokeChange={kind:"add"|"remove";strokes:Stroke[]};
 const DEMO_STORAGE_KEY="reading-v2-offline-ui-demo-1";
 const MAX_DEMO_STATE=480000;
 const MAX_IMPORT_CHARS=120000;
 const MAX_IMPORTED_BOOKS=5;
+
+function textOffsetIn(container:HTMLElement,node:Node,offset:number){
+  const range=document.createRange();
+  range.setStart(container,0);range.setEnd(node,offset);
+  return range.toString().length;
+}
+function strokeDistance(points:{x:number;y:number}[],point:{x:number;y:number}){
+  if(!points.length)return Number.POSITIVE_INFINITY;
+  let closest=Math.hypot(points[0].x-point.x,points[0].y-point.y);
+  for(let index=1;index<points.length;index++){
+    const start=points[index-1],end=points[index];
+    const dx=end.x-start.x,dy=end.y-start.y;
+    const t=Math.max(0,Math.min(1,((point.x-start.x)*dx+(point.y-start.y)*dy)/(dx*dx+dy*dy||1)));
+    closest=Math.min(closest,Math.hypot(point.x-(start.x+dx*t),point.y-(start.y+dy*t)));
+  }
+  return closest;
+}
 
 const seedBooks: DemoBook[] = [
   {
@@ -221,7 +243,10 @@ export function DemoLibrary() {
   const [strokes,setStrokes] = useState<Stroke[]>([]);
   const [markings,setMarkings] = useState<Marking[]>([]);
   const [drawing,setDrawing] = useState(false);
+  const [drawingTool,setDrawingTool] = useState<"pen"|"eraser">("pen");
   const [activeStroke,setActiveStroke] = useState<Stroke|null>(null);
+  const [undoHistory,setUndoHistory] = useState<StrokeChange[]>([]);
+  const [redoHistory,setRedoHistory] = useState<StrokeChange[]>([]);
   const [selection,setSelection] = useState<Selection|null>(null);
   const [replyDrafts,setReplyDrafts] = useState<Record<string,string>>({});
   const [importing,setImporting] = useState(false);
@@ -230,17 +255,25 @@ export function DemoLibrary() {
   const [chapterIndex,setChapterIndex] = useState(0);
   const [pageOffset,setPageOffset] = useState(0);
   const [pageCount,setPageCount] = useState(1);
-  const [columnWidth,setColumnWidth] = useState(0);
+  const [paginationReady,setPaginationReady] = useState(false);
+  const [flowLayout,setFlowLayout] = useState({contentWidth:0,pageStep:0,pageInset:0});
   const [viewportWidth,setViewportWidth] = useState(0);
   const flowViewportRef=useRef<HTMLDivElement|null>(null);
   const flowRef=useRef<HTMLDivElement|null>(null);
+  const pagesRef=useRef<HTMLDivElement|null>(null);
+  // Keyboard events can arrive in the small interval between a React commit
+  // and the effect that rebinds the listener. Keep navigation's source of
+  // truth synchronous so a rapid Left/Right pair never uses a stale closure.
+  const pageOffsetRef=useRef(0);
+  const pageCountRef=useRef(1);
+  const visiblePagesRef=useRef<1|2>(1);
   const jumpToChapterEnd=useRef(false);
   const [kind,setKind] = useState<string>("全部");
   const [search,setSearch] = useState("");
   const [notes,setNotes] = useState<DemoNote[]>(initialNotes);
   const [noteDraft,setNoteDraft] = useState("");
   const [openNoteId,setOpenNoteId] = useState<string|null>(null);
-  const [notesVisible,setNotesVisible] = useState(true);
+  const [notesVisible,setNotesVisible] = useState(false);
   const [tocVisible,setTocVisible] = useState(false);
   const [night,setNight] = useState(false);
   const [fontSize,setFontSize] = useState(19);
@@ -250,6 +283,7 @@ export function DemoLibrary() {
   const noteSequence=useRef(0);
   const fileRef=useRef<HTMLInputElement|null>(null);
   const drawingRef=useRef<Stroke|null>(null);
+  const erasedStrokesRef=useRef<Stroke[]>([]);
   useEffect(()=>{
     const task=window.setTimeout(()=>{
       try{
@@ -299,7 +333,11 @@ export function DemoLibrary() {
             if(Array.isArray(parsed.markings))setMarkings((parsed.markings as Marking[])
               .filter(x=>x&&typeof x.bookId==="string"&&typeof x.id==="string"&&
                 typeof x.quote==="string"&&x.quote.length<=160&&x.quote.length>0&&
-                Number.isInteger(x.chapterIndex)&&x.chapterIndex>=0).slice(0,500));
+                Number.isInteger(x.chapterIndex)&&x.chapterIndex>=0&&
+                (x.ranges===undefined||(Array.isArray(x.ranges)&&x.ranges.length<=40&&x.ranges.every(r=>
+                  r&&Number.isInteger(r.paragraphIndex)&&r.paragraphIndex>=0&&
+                  Number.isInteger(r.start)&&r.start>=0&&Number.isInteger(r.end)&&r.end>r.start))))
+              .slice(0,500));
             if(Array.isArray(parsed.strokes))setStrokes((parsed.strokes as Stroke[]).filter(
               x=>x&&typeof x.id==="string"&&typeof x.bookId==="string"&&
                 Number.isInteger(x.chapterIndex)&&Array.isArray(x.points)&&x.points.length<=1200&&
@@ -348,61 +386,124 @@ export function DemoLibrary() {
   const saveKey=book.id+":"+safeChapterIndex+":"+pageOffset;
   const bookmarked=saved.includes(saveKey);
   const currentNotes=notes.filter(item=>item.bookId===book.id && item.chapterIndex===safeChapterIndex);
+  const tocEntries=book.toc??(book.imported?[]:book.chapters.map((item,index)=>({title:item.name,chapterIndex:index})));
   const allBookNotes=notes.filter(item=>item.bookId===book.id);
   const results=books.filter(item=>
     (kind==="全部"||(kind==="我的导入"?item.imported===true:item.kind===kind)) &&
     (item.title+item.subtitle+item.author).toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())
   );
   const percent=Math.round((safeChapterIndex+(pageOffset+1)/Math.max(1,pageCount))/book.chapters.length*100);
-  const visiblePages=doublePage&&viewportWidth>650?2:1;
+  // The desktop reader and its annotation sidebar share the same breakpoint.
+  // Keeping the state breakpoint in lock-step with CSS is important: rendering
+  // two logical pages while CSS hides one was previously another way to lose a
+  // page from the reader's visible sequence.
+  const visiblePages=doublePage&&viewportWidth>=1000?2:1;
+  pageOffsetRef.current=pageOffset;
+  pageCountRef.current=pageCount;
+  visiblePagesRef.current=visiblePages;
   const pageKey=book.id+":"+safeChapterIndex;
 
   // CSS columns use the browser's own line wrapping. A physical page has a
   // fixed text viewport, so long PDF/EPUB/TXT chunks continue on later pages
   // rather than extending the document vertically or losing trailing lines.
   useLayoutEffect(()=>{
-    if(screen!=="reader"||!flowViewportRef.current)return;
-    const viewport=flowViewportRef.current;
+    if(screen!=="reader"||!pagesRef.current)return;
+    const pages=pagesRef.current;
     const measure=()=>{
-      setColumnWidth(Math.max(1,Math.round(viewport.getBoundingClientRect().width)));
+      const first=pages.querySelector<HTMLElement>(".demo-paper-page");
+      if(!first)return;
+      const firstRect=first.getBoundingClientRect();
+      const second=pages.querySelector<HTMLElement>(".demo-paper-page-next");
+      const secondRect=second?.getBoundingClientRect();
+      const style=getComputedStyle(first);
+      const pageInset=Math.max(0,
+        parseFloat(style.paddingLeft)||0,
+        parseFloat(style.paddingRight)||0,
+      );
+      const pageWidth=Math.max(1,firstRect.width);
+      const pageStep=Math.max(1,secondRect
+        ?secondRect.left-firstRect.left
+        :pageWidth);
+      setFlowLayout({
+        contentWidth:Math.max(1,Math.round(pageWidth-pageInset*2)),
+        pageStep:Math.round(pageStep),
+        pageInset:Math.round(pageInset),
+      });
       setViewportWidth(window.innerWidth);
     };
     measure();
     const observer=new ResizeObserver(measure);
-    observer.observe(viewport);
+    observer.observe(pages);
     window.addEventListener("resize",measure);
     return()=>{observer.disconnect();window.removeEventListener("resize",measure);};
-  },[screen,book.id,safeChapterIndex,notesVisible,doublePage]);
+  },[screen,book.id,safeChapterIndex,doublePage]);
   useLayoutEffect(()=>{
-    if(screen!=="reader"||!columnWidth||!flowRef.current)return;
+    if(screen!=="reader"||!flowLayout.pageStep||!flowRef.current)return;
+    setPaginationReady(false);
+    let measureFrame:number|undefined;
     const frame=requestAnimationFrame(()=>{
+      // The first frame applies the newly measured column width; the second
+      // observes the resulting multi-column layout. Measuring in the first
+      // frame can otherwise see a partial scroll extent and clamp a restored
+      // page before the browser has created all of its columns.
+      measureFrame=requestAnimationFrame(()=>{
       const flow=flowRef.current;
       if(!flow)return;
-      const measuredWidth=Math.max(1,flow.clientWidth);
-      const total=Math.max(1,Math.ceil((flow.scrollWidth-2)/measuredWidth));
+      const columnGap=Math.max(0,flowLayout.pageStep-flowLayout.contentWidth);
+      // CSS transforms can shrink the reported scrollable extent in Chromium
+      // once the current page has moved left. Measure the unshifted source so
+      // opening the notes sidebar or restoring a saved page never turns a
+      // later page into an apparent chapter end and clamps it backwards.
+      const activeTransform=flow.style.transform;
+      flow.style.transform="none";
+      const fullFlowWidth=flow.scrollWidth;
+      flow.style.transform=activeTransform;
+      // A single source flow owns every physical column.  scrollWidth includes
+      // the final content column but not its following gap, hence the one-gap
+      // correction before converting its measured extent into page count.
+      const total=Math.max(1,Math.ceil((fullFlowWidth+columnGap-2)/flowLayout.pageStep));
+      pageCountRef.current=total;
       setPageCount(total);
       const lastStart=Math.floor((total-1)/visiblePages)*visiblePages;
       if(jumpToChapterEnd.current){
         jumpToChapterEnd.current=false;
+        pageOffsetRef.current=lastStart;
         setPageOffset(lastStart);
       }else{
-        setPageOffset(offset=>Math.min(offset,lastStart));
+        setPageOffset(offset=>{
+          const normalized=Math.min(
+            Math.floor(Math.max(0,offset)/visiblePages)*visiblePages,
+            lastStart,
+          );
+          pageOffsetRef.current=normalized;
+          return normalized;
+        });
       }
+      setPaginationReady(true);
+      });
     });
-    return()=>cancelAnimationFrame(frame);
-  },[screen,book.id,safeChapterIndex,columnWidth,fontSize,visiblePages]);
+    return()=>{
+      cancelAnimationFrame(frame);
+      if(measureFrame!==undefined)cancelAnimationFrame(measureFrame);
+    };
+  },[screen,book.id,safeChapterIndex,flowLayout,fontSize,visiblePages]);
   function turnPage(delta:-1|1){
-    const stride=visiblePages;
+    if(!paginationReady)return;
+    const stride=visiblePagesRef.current;
+    const current=pageOffsetRef.current;
+    const total=pageCountRef.current;
     if(delta===1){
-      if(pageOffset+stride<pageCount){
-        const next=pageOffset+stride;
+      if(current+stride<total){
+        const next=current+stride;
+        pageOffsetRef.current=next;
         setPageOffset(next);
         setPageProgress(old=>({...old,[pageKey]:next}));
       }else if(safeChapterIndex+1<book.chapters.length){
         goChapter(safeChapterIndex+1);
       }
-    }else if(pageOffset>0){
-      const next=Math.max(0,pageOffset-stride);
+    }else if(current>0){
+      const next=Math.max(0,current-stride);
+      pageOffsetRef.current=next;
       setPageOffset(next);
       setPageProgress(old=>({...old,[pageKey]:next}));
     }else if(safeChapterIndex>0){
@@ -414,6 +515,13 @@ export function DemoLibrary() {
     if(screen!=="reader")return;
     const onKey=(event:globalThis.KeyboardEvent)=>{
       if(event.altKey||event.ctrlKey||event.metaKey)return;
+      if(event.key==="Escape"){
+        if(tocVisible||notesVisible||drawing||selection){
+          endStroke();setTocVisible(false);setNotesVisible(false);setDrawing(false);setSelection(null);
+          event.preventDefault();
+        }
+        return;
+      }
       if(event.key!=="ArrowLeft"&&event.key!=="ArrowRight")return;
       const target=event.target;
       if(target instanceof HTMLElement&&
@@ -436,21 +544,26 @@ export function DemoLibrary() {
 
   function navigate(next:"library"|"reader"|"notes"|"bookmarks"|"settings"){
     setScreen(next);setNotice("");
-    if(next==="reader")setTocVisible(false);
+    if(next!=="reader"){setTocVisible(false);setNotesVisible(false);setDrawing(false);}
   }
   function openBook(id:string){
     const nextChapter=Math.min(progress[id]??0,(books.find(x=>x.id===id)?.chapters.length??1)-1);
+    const nextPage=pageProgress[id+":"+nextChapter]??0;
     setBookId(id);setChapterIndex(nextChapter);
-    setPageOffset(pageProgress[id+":"+nextChapter]??0);setScreen("reader");
-    setTocVisible(false);setOpenNoteId(null);setNoteDraft("");setNotesVisible(true);setNotice("");
+    pageOffsetRef.current=nextPage;
+    setPaginationReady(false);
+    setPageOffset(nextPage);setScreen("reader");
+    setTocVisible(false);setOpenNoteId(null);setNoteDraft("");setNotesVisible(false);setNotice("");
   }
   function goChapter(index:number){
     if(index<0||index>=book.chapters.length)return;
+    pageOffsetRef.current=0;pageCountRef.current=1;
+    setPaginationReady(false);
     setChapterIndex(index);setPageOffset(0);setPageCount(1);
     setPageProgress(old=>({...old,[book.id+":"+index]:0}));
     setProgress(p=>({...p,[book.id]:index}));
     setOpenNoteId(null);setSelection(null);setDrawing(false);
-    setTocVisible(false);setNoteDraft("");setNotice("");
+    setTocVisible(false);setNotesVisible(false);setNoteDraft("");setNotice("");
   }
   function toggleBookmark(){
     setSaved(current=>current.includes(saveKey)?current.filter(k=>k!==saveKey):[...current,saveKey]);
@@ -481,10 +594,15 @@ export function DemoLibrary() {
         throw Error("演示模式单本书最多 12 万字符、80 段；请选较短的测试读物。");
       const title=file.name.replace(/\.(?:txt|pdf|epub)$/i,"").slice(0,70);
       const id="local-"+crypto.randomUUID();
+      const toc=prepared.chapters
+        .filter((item,index,items)=>item.title.trim()&&item.chunkIndex>=0&&item.chunkIndex<prepared.chunks.length&&
+          items.findIndex(other=>other.title===item.title&&other.chunkIndex===item.chunkIndex)===index)
+        .map(item=>({title:item.title.slice(0,65),chapterIndex:item.chunkIndex}));
       const chapters:Chapter[]=prepared.chunks.map((body,index)=>{
-        const match=[...prepared.chapters].reverse().find(c=>c.chunkIndex<=index);
         return {
-          name:match?.title?.slice(0,65)??("第 "+(index+1)+" 段"),
+          // A storage chunk is never a chapter title. Only a verified source
+          // navigation entry may introduce one into the reading flow.
+          name:toc.find(item=>item.chapterIndex===index)?.title??"",
           kicker:"本地导入 · "+String(index+1).padStart(2,"0")+" / "+prepared.chunks.length,
           paragraphs:body.split(/\n+/).map(p=>p.trim()).filter(Boolean),
           marked:"",companionThought:"",
@@ -493,7 +611,9 @@ export function DemoLibrary() {
       setBooks(old=>[...old,{id,title:title||"未命名作品",
         subtitle:"仅保存在当前浏览器 · 可以离线阅读",author:"我导入的测试读物",
         kind:"我的导入",edition:"LOCAL ONLY",color:"moss",initials:"本",
-        chapters,imported:true}]);
+        chapters,
+        toc,
+        imported:true}]);
       setBookId(id);setChapterIndex(0);setPageOffset(0);setScreen("reader");setKind("全部");
       setNotice("已导入本地阅读。受浏览器容量限制，请及时备份，切勿依赖它保存唯一原稿。");
     }catch(error){
@@ -523,19 +643,37 @@ export function DemoLibrary() {
   }
   function captureSelection(index:number,container:HTMLElement){
     if(drawing)return;
-    const selection=window.getSelection();
-    if(!selection||selection.isCollapsed||!selection.anchorNode||!selection.focusNode||
-      !container.contains(selection.anchorNode)||!container.contains(selection.focusNode))return;
-    const quote=selection.toString().trim();
+    const selected=window.getSelection();
+    if(!selected||selected.isCollapsed||!selected.anchorNode||!selected.focusNode||
+      !container.contains(selected.anchorNode)||!container.contains(selected.focusNode))return;
+    const range=selected.getRangeAt(0);
+    const quote=selected.toString().trim();
     if(quote.length<2||quote.length>160)return;
-    setSelection({quote,chapterIndex:index});
-    setNotesVisible(true);
+    const paragraphs=Array.from(container.querySelectorAll<HTMLElement>("p[data-paragraph-index]"));
+    const paragraphFor=(node:Node)=>{
+      const element=node.nodeType===Node.ELEMENT_NODE?node as Element:node.parentElement;
+      return element?.closest<HTMLElement>("p[data-paragraph-index]")??null;
+    };
+    const startParagraph=paragraphFor(range.startContainer),endParagraph=paragraphFor(range.endContainer);
+    const first=startParagraph?paragraphs.indexOf(startParagraph):-1;
+    const last=endParagraph?paragraphs.indexOf(endParagraph):-1;
+    if(first<0||last<first)return;
+    const ranges=paragraphs.slice(first,last+1).flatMap((paragraph,relativeIndex)=>{
+      const isFirst=relativeIndex===0,isLast=relativeIndex===last-first;
+      const start=isFirst?textOffsetIn(paragraph,range.startContainer,range.startOffset):0;
+      const end=isLast?textOffsetIn(paragraph,range.endContainer,range.endOffset):(paragraph.textContent?.length??0);
+      const paragraphIndex=Number(paragraph.dataset.paragraphIndex);
+      return Number.isInteger(paragraphIndex)&&start>=0&&end>start?[{paragraphIndex,start,end}]:[];
+    });
+    if(!ranges.length)return;
+    setSelection({quote,chapterIndex:index,ranges});
   }
   function markSelection(){
     if(!selection||selection.chapterIndex!==chapterIndex)return;
-    if(!markings.some(m=>m.bookId===book.id&&m.chapterIndex===chapterIndex&&m.quote===selection.quote)){
+    if(!markings.some(m=>m.bookId===book.id&&m.chapterIndex===chapterIndex&&
+      JSON.stringify(m.ranges)===JSON.stringify(selection.ranges))){
       setMarkings(old=>[...old,{id:crypto.randomUUID(),bookId:book.id,
-        chapterIndex,quote:selection.quote}]);
+        chapterIndex,quote:selection.quote,ranges:selection.ranges}]);
     }
     setNotice("这段文字已划线，保存在当前浏览器。");
     window.getSelection()?.removeAllRanges();
@@ -545,14 +683,40 @@ export function DemoLibrary() {
     return {x:Math.min(1,Math.max(0,(event.clientX-r.left)/r.width)),
       y:Math.min(1,Math.max(0,(event.clientY-r.top)/r.height))};
   }
+  function recordStrokeChange(change:StrokeChange){
+    if(!change.strokes.length)return;
+    setUndoHistory(old=>[...old,change].slice(-80));
+    setRedoHistory([]);
+  }
+  function eraseAt(point:{x:number;y:number},page:number){
+    setStrokes(old=>{
+      const erased=old.filter(stroke=>stroke.bookId===book.id&&stroke.chapterIndex===safeChapterIndex&&
+        (stroke.page??0)===page&&strokeDistance(stroke.points,point)<.026&&
+        !erasedStrokesRef.current.some(item=>item.id===stroke.id));
+      if(!erased.length)return old;
+      erasedStrokesRef.current=[...erasedStrokesRef.current,...erased];
+      const ids=new Set(erased.map(item=>item.id));
+      return old.filter(item=>!ids.has(item.id));
+    });
+  }
   function startStroke(event:PointerEvent<SVGSVGElement>,index:number,page:number){
     if(!drawing)return;
     event.currentTarget.setPointerCapture(event.pointerId);
+    if(drawingTool==="eraser"){
+      erasedStrokesRef.current=[];
+      eraseAt(position(event),page);
+      return;
+    }
     const stroke:Stroke={id:crypto.randomUUID(),bookId:book.id,chapterIndex:index,page,
       points:[position(event)]};
     drawingRef.current=stroke;setActiveStroke(stroke);
   }
   function moveStroke(event:PointerEvent<SVGSVGElement>){
+    if(drawingTool==="eraser"){
+      const page=Number(event.currentTarget.dataset.page??0);
+      eraseAt(position(event),page);
+      return;
+    }
     if(!drawingRef.current)return;
     const stroke={...drawingRef.current,
       points:[...drawingRef.current.points.slice(-1198),position(event)]};
@@ -566,7 +730,44 @@ export function DemoLibrary() {
     setActiveStroke(null);
     if(finished&&finished.points.length>1){
       setStrokes(old=>[...old.filter(Boolean).slice(-499),finished]);
+      recordStrokeChange({kind:"add",strokes:[finished]});
     }
+    if(erasedStrokesRef.current.length){
+      recordStrokeChange({kind:"remove",strokes:erasedStrokesRef.current});
+      erasedStrokesRef.current=[];
+    }
+  }
+  function undoStroke(){
+    endStroke();
+    setUndoHistory(old=>{
+      const change=old.at(-1);if(!change)return old;
+      setStrokes(strokes=>change.kind==="add"
+        ?strokes.filter(stroke=>!change.strokes.some(item=>item.id===stroke.id))
+        :[...strokes,...change.strokes.filter(item=>!strokes.some(stroke=>stroke.id===item.id))].slice(-500));
+      setRedoHistory(redo=>[...redo,change].slice(-80));
+      return old.slice(0,-1);
+    });
+  }
+  function redoStroke(){
+    setRedoHistory(old=>{
+      const change=old.at(-1);if(!change)return old;
+      setStrokes(strokes=>change.kind==="add"
+        ?[...strokes,...change.strokes.filter(item=>!strokes.some(stroke=>stroke.id===item.id))].slice(-500)
+        :strokes.filter(stroke=>!change.strokes.some(item=>item.id===stroke.id)));
+      setUndoHistory(undo=>[...undo,change].slice(-80));
+      return old.slice(0,-1);
+    });
+  }
+  function clearCurrentPageInk(){
+    endStroke();
+    setStrokes(old=>{
+      const removed=old.filter(stroke=>stroke.bookId===book.id&&stroke.chapterIndex===safeChapterIndex&&
+        (stroke.page??0)===pageOffset);
+      if(!removed.length)return old;
+      recordStrokeChange({kind:"remove",strokes:removed});
+      const ids=new Set(removed.map(item=>item.id));
+      return old.filter(stroke=>!ids.has(stroke.id));
+    });
   }
   function sendReply(id:string){
     const content=replyDrafts[id]?.trim();
@@ -599,71 +800,93 @@ export function DemoLibrary() {
     if(openNoteId===id)setOpenNoteId(null);
     setNotice("已从演示界面移除这条批注。");
   }
-  function renderChapter(index:number,shownPage:number,secondary=false){
-    const section=book.chapters[index];
-    if(!section)return null;
-    const linkedNote=notes.find(x=>x.bookId===book.id&&x.chapterIndex===index&&x.author==="共读伙伴");
-    const isFirst=index===safeChapterIndex&&!secondary;
-    return (
-      <article className={"demo-paper-page demo-physical-page"+(secondary?" demo-paper-page-next":"")}
-        key={book.id+":"+index+":"+shownPage} aria-label={section.name+" · 第 "+(shownPage+1)+" 页"}>
-        <div className="demo-flow-viewport" ref={isFirst?flowViewportRef:undefined}>
-          <div className="demo-column-flow"
-            ref={isFirst?flowRef:undefined}
-            style={{
-              columnWidth:columnWidth>0?columnWidth+"px":undefined,
-              transform:columnWidth>0?"translate3d(-"+(shownPage*columnWidth)+"px,0,0)":undefined,
-            }}>
-            <div className="demo-chapter-ornament">✧</div>
-            <div className="demo-chapter-kicker">{section.kicker}</div>
-            <h2 className="demo-chapter-name">{section.name}</h2>
-            <div className="demo-prose" style={{fontSize:fontSize+"px"}}
-              onMouseUp={e=>captureSelection(index,e.currentTarget)}
-              onTouchEnd={e=>captureSelection(index,e.currentTarget)}>
-              {section.paragraphs.map((paragraph,i)=>{
-                const personal=markings.find(m=>m.bookId===book.id&&m.chapterIndex===index&&
-                  paragraph.includes(m.quote));
-                const match=personal?.quote||(section.marked&&paragraph.includes(section.marked)
-                  ?section.marked:"");
-                const start=match?paragraph.indexOf(match):-1;
-                if(start<0)return <p key={i}>{paragraph}</p>;
-                return <p key={i}>
-                  {paragraph.slice(0,start)}
-                  <button type="button" className="demo-quoted-mark"
-                    aria-label={"查看这段划线与批注："+match}
-                    onClick={()=>{
-                      const matched=notes.find(n=>n.bookId===book.id&&
-                        n.chapterIndex===index&&n.quote===match);
-                      setOpenNoteId(matched?.id??linkedNote?.id??null);
-                      setNotesVisible(true);
-                      setNotice("点击划线查看批注；也可以选中文字创建自己的划线。");
-                    }}>{match}</button>
-                  {paragraph.slice(start+match.length)}
-                </p>;
-              })}
-            </div>
-          </div>
+  function renderPaper(shownPage:number,secondary=false,blank=false){
+    return <article className={"demo-paper-page demo-physical-page"+
+      (secondary?" demo-paper-page-next":"")+(blank?" demo-paper-page-blank":"")}
+      key={book.id+":"+safeChapterIndex+":"+shownPage}
+      aria-label={blank?"章节末尾留白页":chapter.name+" · 第 "+(shownPage+1)+" 页"}>
+      <div className="demo-paper-footer">
+        <span>SHARED READING ROOM</span>
+        <span>{blank?"":String(shownPage+1).padStart(2,"0")+" / "+String(safeChapterIndex+1).padStart(2,"0")}</span>
+      </div>
+    </article>;
+  }
+
+  function renderInkLayer(shownPage:number,slot:0|1){
+    return <svg className={"demo-ink-layer"+(drawing?" demo-ink-active":"")}
+      key={"ink:"+shownPage}
+      style={{left:slot===0?0:flowLayout.pageStep+"px",width:(flowLayout.pageStep||undefined)}}
+      viewBox="0 0 100 100" preserveAspectRatio="none"
+      role="img" aria-label="本地演示手写标记层"
+      data-page={shownPage}
+      onPointerDown={e=>startStroke(e,safeChapterIndex,shownPage)}
+      onPointerMove={moveStroke} onPointerUp={endStroke} onPointerCancel={endStroke}>
+      {[...strokes.filter(t=>t&&t.bookId===book.id&&t.chapterIndex===safeChapterIndex&&
+          (t.page??0)===shownPage),
+        ...(activeStroke?.bookId===book.id&&activeStroke.chapterIndex===safeChapterIndex&&
+          (activeStroke.page??0)===shownPage?[activeStroke]:[])].map(t=>
+        <polyline key={t.id} fill="none" stroke="#ac6550" strokeWidth=".65"
+          strokeLinecap="round" strokeLinejoin="round"
+          points={t.points.map(p=>(p.x*100)+","+(p.y*100)).join(" ")}/>
+      )}
+    </svg>;
+  }
+
+  function renderChapterFlow(){
+    const linkedNote=notes.find(x=>x.bookId===book.id&&
+      x.chapterIndex===safeChapterIndex&&x.author==="共读伙伴");
+    const columnGap=Math.max(0,flowLayout.pageStep-flowLayout.contentWidth);
+    const chapterMarkings=markings.filter(item=>item.bookId===book.id&&item.chapterIndex===safeChapterIndex);
+    function openMarking(mark:Marking){
+      const matched=notes.find(note=>note.bookId===book.id&&note.chapterIndex===safeChapterIndex&&note.quote===mark.quote);
+      setOpenNoteId(matched?.id??linkedNote?.id??null);setTocVisible(false);setNotesVisible(true);
+      setNotice("划线会始终显示；点击可查看或补充这段文字的批注。");
+    }
+    function markedParagraph(paragraph:string,paragraphIndex:number){
+      const ranges=chapterMarkings.flatMap(mark=>{
+        const anchored=(mark.ranges??[]).filter(range=>range.paragraphIndex===paragraphIndex)
+          .map(range=>({...range,mark}));
+        if(anchored.length)return anchored;
+        // v1 data used only an excerpt. Preserve it without moving any old note.
+        const start=mark.ranges? -1:paragraph.indexOf(mark.quote);
+        return start<0?[]:[{paragraphIndex,start,end:start+mark.quote.length,mark}];
+      });
+      if(!ranges.length)return paragraph;
+      const stops=[0,paragraph.length,...ranges.flatMap(range=>[range.start,range.end])]
+        .filter(value=>value>=0&&value<=paragraph.length).sort((a,b)=>a-b)
+        .filter((value,index,all)=>index===0||value!==all[index-1]);
+      return stops.slice(0,-1).map((start,index)=>{
+        const end=stops[index+1],content=paragraph.slice(start,end);
+        const range=ranges.find(item=>item.start<=start&&item.end>=end);
+        return range?<mark key={start+":"+end+":"+range.mark.id} className="demo-quoted-mark"
+          role="button" tabIndex={0} aria-label={"查看这段划线与批注："+content}
+          onClick={()=>openMarking(range.mark)} onKeyDown={event=>{
+            if(event.key==="Enter"||event.key===" "){event.preventDefault();openMarking(range.mark);}
+          }}>{content}</mark>:<span key={start+":"+end}>{content}</span>;
+      });
+    }
+    return <div className="demo-flow-viewport" ref={flowViewportRef}>
+      <div className="demo-column-flow" ref={flowRef}
+        style={{
+          width:flowLayout.contentWidth>0?flowLayout.contentWidth+"px":undefined,
+          marginLeft:flowLayout.pageInset||undefined,
+          columnWidth:flowLayout.contentWidth>0?flowLayout.contentWidth+"px":undefined,
+          columnGap:columnGap||undefined,
+          transform:flowLayout.pageStep>0
+            ?"translate3d(-"+(pageOffset*flowLayout.pageStep)+"px,0,0)"
+            :undefined,
+        }}>
+        {chapter.name&&<><div className="demo-chapter-ornament">✧</div>
+          <div className="demo-chapter-kicker">{chapter.kicker}</div>
+          <h2 className="demo-chapter-name">{chapter.name}</h2></>}
+        <div className="demo-prose" style={{fontSize:fontSize+"px"}}
+          onMouseUp={e=>captureSelection(safeChapterIndex,e.currentTarget)}
+          onTouchEnd={e=>captureSelection(safeChapterIndex,e.currentTarget)}>
+          {chapter.paragraphs.map((paragraph,i)=><p key={i} data-paragraph-index={i}>
+            {markedParagraph(paragraph,i)}</p>)}
         </div>
-        <svg className={"demo-ink-layer"+(drawing?" demo-ink-active":"")}
-          viewBox="0 0 100 100" preserveAspectRatio="none"
-          role="img" aria-label="本地演示手写标记层"
-          onPointerDown={e=>startStroke(e,index,shownPage)}
-          onPointerMove={moveStroke} onPointerUp={endStroke} onPointerCancel={endStroke}>
-          {[...strokes.filter(t=>t&&t.bookId===book.id&&t.chapterIndex===index&&
-              (t.page??0)===shownPage),
-            ...(activeStroke?.bookId===book.id&&activeStroke.chapterIndex===index&&
-              (activeStroke.page??0)===shownPage?[activeStroke]:[])].map(t=>
-            <polyline key={t.id} fill="none" stroke="#ac6550" strokeWidth=".65"
-              strokeLinecap="round" strokeLinejoin="round"
-              points={t.points.map(p=>(p.x*100)+","+(p.y*100)).join(" ")}/>
-          )}
-        </svg>
-        <div className="demo-paper-footer">
-          <span>SHARED READING ROOM</span>
-          <span>{String(shownPage+1).padStart(2,"0")} / {String(index+1).padStart(2,"0")}</span>
-        </div>
-      </article>
-    );
+      </div>
+    </div>;
   }
   function renderNote(item:DemoNote){
     return <article key={item.id} className={"demo-note-card"+(openNoteId===item.id?" demo-note-selected":"")}>
@@ -692,7 +915,7 @@ export function DemoLibrary() {
   }
 
   return (
-    <div data-demo-ready={localReady?"yes":"no"} className={"demo-app"+(night?" demo-night":"")}>
+    <div data-demo-ready={localReady?"yes":"no"} className={"demo-app"+(night?" demo-night":"")+(screen==="reader"?" demo-reading-mode":"")}>
       <aside className="demo-sidebar" aria-label="演示导航">
         <button className="demo-brand" onClick={()=>navigate("library")} type="button">
           <span className="demo-brand-seal">S<span>.</span></span>
@@ -815,62 +1038,65 @@ export function DemoLibrary() {
                 <button type="button" className={"demo-icon-action"+(bookmarked?" demo-icon-selected":"")}
                   aria-pressed={bookmarked} onClick={toggleBookmark}
                   title={bookmarked?"移除演示书签":"添加演示书签"}>{bookmarked?"◆":"◇"} <span>书签</span></button>
-                <button type="button" className="demo-icon-action" aria-expanded={tocVisible}
-                  onClick={()=>setTocVisible(x=>!x)}>☷ <span>目录</span></button>
+                {tocEntries.length>0&&<button type="button" className="demo-icon-action" aria-expanded={tocVisible}
+                  onClick={()=>{setDrawing(false);setNotesVisible(false);setTocVisible(x=>!x);}}>☷ <span>目录</span></button>}
                 <button type="button" className="demo-icon-action" aria-pressed={notesVisible}
-                  onClick={()=>setNotesVisible(x=>!x)}>✎ <span>批注</span></button>
+                  onClick={()=>{setDrawing(false);setTocVisible(false);setNotesVisible(x=>!x);}}>✎ <span>批注</span></button>
                 <button type="button" className={"demo-icon-action"+(drawing?" demo-icon-selected":"")}
-                  aria-pressed={drawing} onClick={()=>{endStroke();setDrawing(x=>!x);}}>
+                  aria-pressed={drawing} onClick={()=>{endStroke();setTocVisible(false);setNotesVisible(false);setDrawing(x=>!x);}}>
                   ✎ <span>{drawing?"结束手绘":"自由手绘"}</span></button>
                 <button type="button" className="demo-icon-action" onClick={()=>navigate("settings")}>⚙ <span>设置</span></button>
               </div>
             </div>
 
-            {tocVisible&&<div className="demo-toc">
-              <div><strong>章节目录</strong><span>{book.chapters.length} CHAPTERS</span></div>
-              {book.chapters.map((c,i)=><button key={c.name} type="button"
-                className={i===chapterIndex?"demo-toc-active":""} onClick={()=>goChapter(i)}>
-                <span>{String(i+1).padStart(2,"0")}</span> {c.name} {i===chapterIndex?"· 正在读":""}
-              </button>)}
-            </div>}
+            {tocVisible&&tocEntries.length>0&&<section className="demo-reader-panel demo-toc" role="dialog" aria-label="原书目录">
+              <div className="demo-panel-heading"><div><strong>原书目录</strong><span>{tocEntries.length} ITEMS</span></div>
+                <button type="button" className="demo-panel-close" onClick={()=>setTocVisible(false)} aria-label="关闭目录">×</button></div>
+              <div className="demo-panel-scroll">{tocEntries.map((item,index)=><button key={item.chapterIndex+":"+item.title} type="button"
+                className={item.chapterIndex===chapterIndex?"demo-toc-active":""} onClick={()=>goChapter(item.chapterIndex)}>
+                <span>{String(index+1).padStart(2,"0")}</span> {item.title} {item.chapterIndex===chapterIndex?"· 正在读":""}
+              </button>)}</div>
+            </section>}
 
             {selection?.chapterIndex===chapterIndex&&!drawing&&<div className="demo-selection-toolbar"
               role="status"><span>已选「{selection.quote.slice(0,36)}{selection.quote.length>36?"…":""}」</span>
               <button type="button" onClick={markSelection}>划线保存</button>
-              <button type="button" onClick={()=>{setNotesVisible(true);
+              <button type="button" onClick={()=>{setTocVisible(false);setNotesVisible(true);
                 document.getElementById("demo-new-note")?.focus();}}>写批注</button>
               <button type="button" onClick={()=>setSelection(null)}>取消</button></div>}
             {drawing&&<div className="demo-drawing-help">
-              手绘模式：用鼠标或手指在纸面上画线。
-              <button type="button" onClick={()=>setStrokes(old=>old.filter(t=>t&&
-                !(t.bookId===book.id&&t.chapterIndex===chapterIndex&&(t.page??0)===pageOffset)))}>清除当前页笔迹</button>
+              <span>手绘：笔迹按当前书页保存。</span>
+              <button type="button" className={drawingTool==="pen"?"demo-tool-selected":""} onClick={()=>setDrawingTool("pen")}>画笔</button>
+              <button type="button" className={drawingTool==="eraser"?"demo-tool-selected":""} onClick={()=>setDrawingTool("eraser")}>橡皮擦</button>
+              <button type="button" disabled={!undoHistory.length} onClick={undoStroke}>撤销</button>
+              <button type="button" disabled={!redoHistory.length} onClick={redoStroke}>重做</button>
+              <button type="button" onClick={clearCurrentPageInk}>清除当前页笔迹</button>
               <button type="button" onClick={()=>setDrawing(false)}>完成</button>
             </div>}
             <div className="demo-reading-layout" data-paged="true">
               <div className="demo-book-column">
-                <div className={"demo-pages"+(visiblePages===2?" demo-pages-spread":"")}>
-                  {renderChapter(safeChapterIndex,pageOffset)}
-                  {visiblePages===2&&(
-                    pageOffset+1<pageCount
-                      ?renderChapter(safeChapterIndex,pageOffset+1,true)
-                      :safeChapterIndex+1<book.chapters.length
-                        ?renderChapter(safeChapterIndex+1,0,true)
-                        :<div className="demo-blank-facing-page" aria-label="本书最后一页"/>
-                  )}
+                <div ref={pagesRef} className={"demo-pages"+(visiblePages===2?" demo-pages-spread":"")}>
+                  {renderPaper(pageOffset)}
+                  {visiblePages===2&&renderPaper(pageOffset+1,true,pageOffset+1>=pageCount)}
+                  {renderChapterFlow()}
+                  {renderInkLayer(pageOffset,0)}
+                  {visiblePages===2&&pageOffset+1<pageCount&&renderInkLayer(pageOffset+1,1)}
                 </div>
-                <div className="demo-page-navigation" data-page-count={pageCount} data-page-offset={pageOffset} data-chapter={safeChapterIndex}>
-                  <button type="button" disabled={safeChapterIndex===0&&pageOffset===0}
+                <div className="demo-page-navigation" data-page-count={pageCount} data-page-offset={pageOffset}
+                  data-chapter={safeChapterIndex}>
+                  <button type="button" disabled={!paginationReady||(safeChapterIndex===0&&pageOffset===0)}
                     aria-label="上一页" onClick={()=>turnPage(-1)}>‹ <span>上一页</span></button>
                   <div className="demo-reader-progress">
                     <div className="demo-progress-track"><span style={{width:percent+"%"}}/></div>
                     <div className="demo-progress-label">已读 {percent}% · 第 {Math.min(pageCount,pageOffset+1)}–{Math.min(pageCount,pageOffset+visiblePages)} / {pageCount} 页 · 第 {safeChapterIndex+1}/{book.chapters.length} 段</div>
                   </div>
-                  <button type="button" disabled={safeChapterIndex===book.chapters.length-1&&pageOffset+visiblePages>=pageCount}
+                  <button type="button" disabled={!paginationReady||(safeChapterIndex===book.chapters.length-1&&pageOffset+visiblePages>=pageCount)}
                     aria-label="下一页" onClick={()=>turnPage(1)}><span>下一页</span> ›</button>
                 </div>
               </div>
-              {notesVisible&&<aside className="demo-annotation-aside" aria-label="当前章节共读批注">
-                <div className="demo-aside-heading"><span>IN THE MARGINS</span><h2>页边的对话 <sup>{currentNotes.length}</sup></h2></div>
+              {notesVisible&&<aside className="demo-reader-panel demo-annotation-aside" role="dialog" aria-label="当前章节共读批注">
+                <div className="demo-panel-heading"><div className="demo-aside-heading"><span>IN THE MARGINS</span><h2>页边的对话 <sup>{currentNotes.length}</sup></h2></div>
+                  <button type="button" className="demo-panel-close" onClick={()=>setNotesVisible(false)} aria-label="关闭批注">×</button></div>
                 <p className="demo-aside-intro">彼此阅读互不打扰，在喜欢的句子旁留下想法。</p>
                 <div className="demo-notes-feed">
                   {currentNotes.map(renderNote)}
