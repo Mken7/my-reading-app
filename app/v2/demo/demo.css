@@ -197,7 +197,7 @@
 }
 .demo-icon-action span {font-size:11px;}
 .demo-icon-action:hover,.demo-icon-selected {background:#e8eee7;color:#46654d;}
-.demo-reading-layout {display:block;min-width:0;}
+.demo-reading-layout {display:flex;flex-direction:column;min-width:0;}
 .demo-book-column {min-width:0;}
 .demo-pages {display:grid;grid-template-columns:minmax(0,1fr);gap:2px;position:relative;overflow:hidden;box-shadow:0 10px 40px rgba(54,55,48,.06);}
 .demo-pages-spread:has(.demo-paper-page-next) {grid-template-columns:repeat(2,minmax(0,1fr));}
@@ -439,7 +439,12 @@
  * is therefore the next column in the same continuous flow, not discarded
  * overflow. Reading remains arrow-controlled rather than document-scrolled. */
 .demo-physical-page {height:clamp(390px,68dvh,730px);min-height:0;overflow:hidden;}
-.demo-flow-viewport {position:absolute;inset:22px 0 42px;min-height:0;overflow:hidden;z-index:1;}
+.demo-flow-viewport {
+  /* Keep the continuous text flow below the running page label.  The flow is
+   * clipped per spread, so starting it at the page edge makes a continued
+   * right-hand column collide with that label even though the text is valid. */
+  position:absolute;inset:44px 0 42px;min-height:0;overflow:hidden;z-index:1;
+}
 .demo-column-flow {height:100%;min-height:0;column-fill:auto;overflow:visible;will-change:transform;}
 .demo-column-flow .demo-chapter-ornament {margin-top:4px;}
 .demo-column-flow .demo-prose {line-height:1.85;letter-spacing:.035em;}
@@ -457,11 +462,11 @@
   .demo-workspace:has(.demo-reader) {height:100%;min-height:0;overflow:hidden;}
   .demo-reader {display:flex;flex-direction:column;min-height:0;padding-bottom:10px;}
   .demo-reader-toolbar {flex:0 0 auto;padding-top:13px;padding-bottom:13px;}
-  .demo-reading-layout {flex:1;min-height:0;align-items:stretch;}
-  .demo-book-column {display:flex;flex-direction:column;min-height:0;}
+  .demo-reading-layout {display:flex;flex:1;min-height:0;align-items:stretch;}
+  .demo-book-column {display:flex;flex:1;flex-direction:column;min-height:0;}
   .demo-pages {flex:1;min-height:0;}
   .demo-physical-page {height:100%;min-height:0;padding-top:22px;padding-bottom:15px;}
-  .demo-flow-viewport {inset:22px 0 39px;}
+  .demo-flow-viewport {inset:44px 0 39px;}
   .demo-annotation-aside {min-height:0;overflow-y:auto;overscroll-behavior:contain;}
   .demo-page-navigation {padding:10px 4px;}
   .demo-global-footer {display:none;}
