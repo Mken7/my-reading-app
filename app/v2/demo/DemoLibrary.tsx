@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect,useLayoutEffect,useRef,useState,type ChangeEvent,type FormEvent,type PointerEvent} from "react";
+import {useEffect,useLayoutEffect,useRef,useState,type ChangeEvent,type CSSProperties,type FormEvent,type PointerEvent} from "react";
 import {decodeTxt,prepareTxt} from "@/lib/v2/txt";
 import {prepareEpub} from "@/lib/v2/epub";
 import {preparePdf} from "@/lib/v2/pdf";
@@ -61,6 +61,11 @@ function strokeDistance(points:{x:number;y:number}[],point:{x:number;y:number}){
     closest=Math.min(closest,Math.hypot(point.x-(start.x+dx*t),point.y-(start.y+dy*t)));
   }
   return closest;
+}
+function chapterSourceLength(chapter:Chapter){
+  // Keep a stable source-space coordinate that does not depend on the current
+  // page width, font size, or single/double-page presentation.
+  return Math.max(1,Array.from(chapter.paragraphs.join("\n\n")).length);
 }
 
 const seedBooks: DemoBook[] = [
@@ -240,6 +245,7 @@ export function DemoLibrary() {
   const [books,setBooks] = useState<DemoBook[]>(seedBooks);
   const [progress,setProgress] = useState<Record<string,number>>({});
   const [pageProgress,setPageProgress] = useState<Record<string,number>>({});
+  const [readingAnchors,setReadingAnchors] = useState<Record<string,number>>({});
   const [strokes,setStrokes] = useState<Stroke[]>([]);
   const [markings,setMarkings] = useState<Marking[]>([]);
   const [drawing,setDrawing] = useState(false);
@@ -256,6 +262,7 @@ export function DemoLibrary() {
   const [pageOffset,setPageOffset] = useState(0);
   const [pageCount,setPageCount] = useState(1);
   const [paginationReady,setPaginationReady] = useState(false);
+  const [progressPreview,setProgressPreview] = useState<number|null>(null);
   const [flowLayout,setFlowLayout] = useState({contentWidth:0,pageStep:0,pageInset:0});
   const [viewportWidth,setViewportWidth] = useState(0);
   const flowViewportRef=useRef<HTMLDivElement|null>(null);
@@ -269,6 +276,8 @@ export function DemoLibrary() {
   const visiblePagesRef=useRef<1|2>(1);
   const layoutFrameRef=useRef<{key:string;signature:string}|null>(null);
   const pendingReflowAnchorRef=useRef<{key:string;ratio:number}|null>(null);
+  const pendingBookAnchorRef=useRef<{chapterIndex:number;ratio:number}|null>(null);
+  const progressPreviewRef=useRef<number|null>(null);
   const jumpToChapterEnd=useRef(false);
   const [kind,setKind] = useState<string>("全部");
   const [search,setSearch] = useState("");
@@ -324,6 +333,12 @@ export function DemoLibrary() {
                 ([key,val])=>key.length<100&&Number.isInteger(val)&&Number(val)>=0&&Number(val)<10000
               )) as Record<string,number>);
             }
+            if(parsed.readingAnchors&&typeof parsed.readingAnchors==="object"&&!Array.isArray(parsed.readingAnchors)){
+              const anchors=parsed.readingAnchors as Record<string,unknown>;
+              setReadingAnchors(Object.fromEntries(Object.entries(anchors).filter(
+                ([key,val])=>key.length<=80&&typeof val==="number"&&Number.isFinite(val)&&val>=0&&val<=1
+              )) as Record<string,number>);
+            }
             if(Array.isArray(parsed.saved))setSaved(parsed.saved.filter(
               (x:unknown)=>typeof x==="string"&&x.length<=100).slice(0,300));
             if(parsed.progress&&typeof parsed.progress==="object"&&!Array.isArray(parsed.progress)){
@@ -370,7 +385,7 @@ export function DemoLibrary() {
           version:1,
           importedBooks:books.filter(b=>b.imported),
           notes:notes.filter(n=>n.author==="我"||(n.replies?.length??0)>0),
-          saved,progress,pageProgress,strokes:strokes.filter(Boolean),markings,settings:{night,fontSize,doublePage},
+          saved,progress,pageProgress,readingAnchors,strokes:strokes.filter(Boolean),markings,settings:{night,fontSize,doublePage},
           recentBook:bookId,
         };
         const serialized=JSON.stringify(snapshot);
@@ -380,7 +395,7 @@ export function DemoLibrary() {
       }catch{setNotice("本地保存失败：可能已达到浏览器容量限制。请先导出备份。");}
     },320);
     return()=>window.clearTimeout(timeout);
-  },[localReady,books,notes,saved,progress,pageProgress,strokes,markings,night,fontSize,doublePage,bookId]);
+  },[localReady,books,notes,saved,progress,pageProgress,readingAnchors,strokes,markings,night,fontSize,doublePage,bookId]);
 
   const book=books.find(item=>item.id===bookId)??books[0];
   const safeChapterIndex=Math.max(0,Math.min(chapterIndex,book.chapters.length-1));
@@ -394,7 +409,23 @@ export function DemoLibrary() {
     (kind==="全部"||(kind==="我的导入"?item.imported===true:item.kind===kind)) &&
     (item.title+item.subtitle+item.author).toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())
   );
-  const percent=Math.round((safeChapterIndex+(pageOffset+1)/Math.max(1,pageCount))/book.chapters.length*100);
+  const chapterSourceLengths=book.chapters.map(chapterSourceLength);
+  const wholeBookSourceLength=chapterSourceLengths.reduce((total,length)=>total+length,0);
+  const sourceBeforeChapter=chapterSourceLengths.slice(0,safeChapterIndex)
+    .reduce((total,length)=>total+length,0);
+  // Page numbers are presentation-dependent. Store and move the reader in
+  // original source space, then translate that anchor back into the currently
+  // measured page columns whenever the reader has to reflow.
+  const chapterSourceRatio=pageCount>1
+    ?Math.min(1,Math.max(0,pageOffset/Math.max(1,pageCount-1)))
+    :0;
+  const derivedWholeBookRatio=Math.min(1,Math.max(0,
+    (sourceBeforeChapter+chapterSourceLengths[safeChapterIndex]*chapterSourceRatio)/
+    Math.max(1,wholeBookSourceLength),
+  ));
+  const wholeBookRatio=readingAnchors[book.id]??derivedWholeBookRatio;
+  const activeProgressRatio=progressPreview??wholeBookRatio;
+  const activeProgressPercent=Math.round(activeProgressRatio*100);
   // The desktop reader and its annotation sidebar share the same breakpoint.
   // Keeping the state breakpoint in lock-step with CSS is important: rendering
   // two logical pages while CSS hides one was previously another way to lose a
@@ -404,6 +435,46 @@ export function DemoLibrary() {
   pageCountRef.current=pageCount;
   visiblePagesRef.current=visiblePages;
   const pageKey=book.id+":"+safeChapterIndex;
+
+  function locateWholeBookRatio(ratio:number){
+    const normalized=Math.min(1,Math.max(0,ratio));
+    const targetOffset=normalized*wholeBookSourceLength;
+    let sourceStart=0;
+    for(let index=0;index<chapterSourceLengths.length;index++){
+      const sourceEnd=sourceStart+chapterSourceLengths[index];
+      if(targetOffset<sourceEnd||index===chapterSourceLengths.length-1){
+        return {
+          chapterIndex:index,
+          ratio:Math.min(1,Math.max(0,(targetOffset-sourceStart)/chapterSourceLengths[index])),
+          sourceOffset:targetOffset,
+        };
+      }
+      sourceStart=sourceEnd;
+    }
+    return {chapterIndex:0,ratio:0,sourceOffset:0};
+  }
+  function sourceRatioForPage(index:number,offset:number,total:number){
+    const sourceBefore=chapterSourceLengths.slice(0,index).reduce((sum,length)=>sum+length,0);
+    const withinChapter=total>1
+      ?Math.min(1,Math.max(0,offset/Math.max(1,total-1)))
+      :0;
+    return Math.min(1,Math.max(0,
+      (sourceBefore+chapterSourceLengths[index]*withinChapter)/Math.max(1,wholeBookSourceLength),
+    ));
+  }
+  const progressLocation=locateWholeBookRatio(activeProgressRatio);
+  // The active chapter's measured density provides an intentionally labelled
+  // estimate while dragging across chapters that have not been paginated yet.
+  const estimatedPage=Math.max(1,Math.round(
+    progressLocation.sourceOffset/Math.max(1,chapterSourceLengths[safeChapterIndex]/Math.max(1,pageCount)),
+  )+1);
+  const previewPage=progressLocation.chapterIndex===safeChapterIndex
+    ?Math.min(pageCount,Math.floor(progressLocation.ratio*Math.max(1,pageCount-1))+1)
+    :estimatedPage;
+  const progressAriaText=`全书已读 ${activeProgressPercent}%；预计第 ${previewPage} 页，第 ${progressLocation.chapterIndex+1} 段`;
+  const progressSliderStyle={
+    "--demo-progress-value":`${Math.round(activeProgressRatio*1000)/10}%`,
+  } as CSSProperties;
 
   // A page number belongs to one measured column width. Keep a chapter-local
   // source position before a reflow, then translate it to the new page count.
@@ -488,11 +559,20 @@ export function DemoLibrary() {
       pageCountRef.current=total;
       setPageCount(total);
       const lastStart=Math.floor((total-1)/visiblePages)*visiblePages;
+      const bookAnchor=pendingBookAnchorRef.current;
       const reflowAnchor=pendingReflowAnchorRef.current;
-      if(jumpToChapterEnd.current){
+      if(bookAnchor?.chapterIndex===safeChapterIndex){
+        pendingBookAnchorRef.current=null;
+        const target=Math.round(bookAnchor.ratio*Math.max(0,total-1));
+        const normalized=Math.min(Math.floor(target/visiblePages)*visiblePages,lastStart);
+        pageOffsetRef.current=normalized;
+        setPageOffset(normalized);
+        setPageProgress(old=>({...old,[pageKey]:normalized}));
+      }else if(jumpToChapterEnd.current){
         jumpToChapterEnd.current=false;
         pageOffsetRef.current=lastStart;
         setPageOffset(lastStart);
+        setReadingAnchors(old=>({...old,[book.id]:sourceRatioForPage(safeChapterIndex,lastStart,total)}));
       }else if(reflowAnchor?.key===pageKey){
         pendingReflowAnchorRef.current=null;
         const target=Math.round(reflowAnchor.ratio*Math.max(0,total-1));
@@ -518,6 +598,39 @@ export function DemoLibrary() {
       if(measureFrame!==undefined)cancelAnimationFrame(measureFrame);
     };
   },[screen,book.id,safeChapterIndex,flowLayout,fontSize,visiblePages,pageKey]);
+  function previewWholeBookProgress(value:number){
+    const ratio=Math.min(1,Math.max(0,value));
+    progressPreviewRef.current=ratio;
+    setProgressPreview(ratio);
+  }
+  function jumpToWholeBookProgress(value:number){
+    const ratio=Math.min(1,Math.max(0,value));
+    progressPreviewRef.current=null;
+    setProgressPreview(null);
+    const target=locateWholeBookRatio(ratio);
+    setReadingAnchors(old=>({...old,[book.id]:ratio}));
+    if(target.chapterIndex===safeChapterIndex){
+      const total=pageCountRef.current;
+      const stride=visiblePagesRef.current;
+      const lastStart=Math.floor((total-1)/stride)*stride;
+      const raw=Math.round(target.ratio*Math.max(0,total-1));
+      const next=Math.min(Math.floor(raw/stride)*stride,lastStart);
+      pageOffsetRef.current=next;
+      setPageOffset(next);
+      setPageProgress(old=>({...old,[pageKey]:next}));
+      setProgress(old=>({...old,[book.id]:safeChapterIndex}));
+      return;
+    }
+    // The target chapter has its own physical column count.  Defer converting
+    // the stable source anchor into a page offset until that chapter has been
+    // measured, rather than reusing a page number from this chapter.
+    pendingBookAnchorRef.current={chapterIndex:target.chapterIndex,ratio:target.ratio};
+    pendingReflowAnchorRef.current=null;
+    pageOffsetRef.current=0;pageCountRef.current=1;
+    setPaginationReady(false);
+    setChapterIndex(target.chapterIndex);setPageOffset(0);setPageCount(1);
+    setProgress(old=>({...old,[book.id]:target.chapterIndex}));
+  }
   function turnPage(delta:-1|1){
     if(!paginationReady)return;
     const stride=visiblePagesRef.current;
@@ -529,6 +642,7 @@ export function DemoLibrary() {
         pageOffsetRef.current=next;
         setPageOffset(next);
         setPageProgress(old=>({...old,[pageKey]:next}));
+        setReadingAnchors(old=>({...old,[book.id]:sourceRatioForPage(safeChapterIndex,next,total)}));
       }else if(safeChapterIndex+1<book.chapters.length){
         goChapter(safeChapterIndex+1);
       }
@@ -537,6 +651,7 @@ export function DemoLibrary() {
       pageOffsetRef.current=next;
       setPageOffset(next);
       setPageProgress(old=>({...old,[pageKey]:next}));
+      setReadingAnchors(old=>({...old,[book.id]:sourceRatioForPage(safeChapterIndex,next,total)}));
     }else if(safeChapterIndex>0){
       jumpToChapterEnd.current=true;
       goChapter(safeChapterIndex-1);
@@ -593,6 +708,7 @@ export function DemoLibrary() {
     setChapterIndex(index);setPageOffset(0);setPageCount(1);
     setPageProgress(old=>({...old,[book.id+":"+index]:0}));
     setProgress(p=>({...p,[book.id]:index}));
+    setReadingAnchors(old=>({...old,[book.id]:sourceRatioForPage(index,0,1)}));
     setOpenNoteId(null);setSelection(null);setDrawing(false);
     setTocVisible(false);setNotesVisible(false);setNoteDraft("");setNotice("");
   }
@@ -1118,8 +1234,27 @@ export function DemoLibrary() {
                   <button type="button" disabled={!paginationReady||(safeChapterIndex===0&&pageOffset===0)}
                     aria-label="上一页" onClick={()=>turnPage(-1)}>‹ <span>上一页</span></button>
                   <div className="demo-reader-progress">
-                    <div className="demo-progress-track"><span style={{width:percent+"%"}}/></div>
-                    <div className="demo-progress-label">已读 {percent}% · 第 {Math.min(pageCount,pageOffset+1)}–{Math.min(pageCount,pageOffset+visiblePages)} / {pageCount} 页 · 第 {safeChapterIndex+1}/{book.chapters.length} 段</div>
+                    <div className="demo-progress-slider" style={progressSliderStyle} data-previewing={progressPreview!==null||undefined}>
+                      {progressPreview!==null&&<output className="demo-progress-preview" aria-live="polite">
+                        {activeProgressPercent}% · 预计第 {previewPage} 页
+                      </output>}
+                      <input type="range" min="0" max="100" step="0.1"
+                        value={activeProgressRatio*100}
+                        aria-label="全书阅读进度" aria-valuetext={progressAriaText}
+                        aria-describedby="demo-progress-label"
+                        onChange={event=>previewWholeBookProgress(Number(event.currentTarget.value)/100)}
+                        onPointerUp={event=>jumpToWholeBookProgress(Number(event.currentTarget.value)/100)}
+                        onPointerCancel={()=>{progressPreviewRef.current=null;setProgressPreview(null);}}
+                        onKeyUp={event=>{
+                          if(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End","PageUp","PageDown"].includes(event.key))
+                            jumpToWholeBookProgress(Number(event.currentTarget.value)/100);
+                        }}
+                        onBlur={event=>{
+                          if(progressPreviewRef.current!==null)
+                            jumpToWholeBookProgress(Number(event.currentTarget.value)/100);
+                        }}/>
+                    </div>
+                    <div id="demo-progress-label" className="demo-progress-label">已读 {Math.round(wholeBookRatio*100)}% · 第 {Math.min(pageCount,pageOffset+1)}–{Math.min(pageCount,pageOffset+visiblePages)} / {pageCount} 页 · 第 {safeChapterIndex+1}/{book.chapters.length} 段</div>
                   </div>
                   <button type="button" disabled={!paginationReady||(safeChapterIndex===book.chapters.length-1&&pageOffset+visiblePages>=pageCount)}
                     aria-label="下一页" onClick={()=>turnPage(1)}><span>下一页</span> ›</button>
