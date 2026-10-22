@@ -981,9 +981,18 @@ export function DemoLibrary() {
   }
 
   function renderInkLayer(shownPage:number,slot:0|1){
+    const paperWidth=flowLayout.contentWidth>0
+      ?flowLayout.contentWidth+flowLayout.pageInset*2
+      :undefined;
     return <svg className={"demo-ink-layer"+(drawing?" demo-ink-active":"")}
       key={"ink:"+shownPage}
-      style={{left:slot===0?0:flowLayout.pageStep+"px",width:(flowLayout.pageStep||undefined)}}
+      // Stroke points are normalized to this SVG's local 0–1 viewBox. In a
+      // single-page reader the paper itself is max-width constrained and
+      // centered, so leave placement to the matching CSS frame instead of
+      // reusing the two-page spread offset.
+      style={visiblePages===2
+        ?{left:slot===0?0:flowLayout.pageStep+"px",width:(paperWidth||undefined)}
+        :undefined}
       viewBox="0 0 100 100" preserveAspectRatio="none"
       role="img" aria-label="本地演示手写标记层"
       data-page={shownPage}

@@ -218,6 +218,28 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
    await send("Input.dispatchMouseEvent",{type:"mouseMoved",x:x+28,y:y+27,button:"left",buttons:1},sessionId);
    await send("Input.dispatchMouseEvent",{type:"mouseReleased",x:x+28,y:y+27,button:"left",clickCount:1},sessionId);
   }
+  if(!mobile&&width>=1000){
+   const rightInk=await evalPage("(()=>{const svg=document.querySelector('.demo-ink-layer[data-page=\\\"1\\\"]');if(!svg)return null;const r=svg.getBoundingClientRect();return {x:Math.round(r.left+r.width*.62),y:Math.round(r.top+r.height*.44)};})()");
+   if(!rightInk)throw Error("Desktop spread did not expose the right-page ink layer");
+   await send("Input.dispatchMouseEvent",{type:"mousePressed",x:rightInk.x,y:rightInk.y,button:"left",clickCount:1},sessionId);
+   await send("Input.dispatchMouseEvent",{type:"mouseMoved",x:rightInk.x+31,y:rightInk.y+19,button:"left",buttons:1},sessionId);
+   await send("Input.dispatchMouseEvent",{type:"mouseReleased",x:rightInk.x+31,y:rightInk.y+19,button:"left",clickCount:1},sessionId);
+   await waitFor("document.querySelectorAll('.demo-ink-layer polyline').length>=2","left and right spread ink strokes");
+   await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-drawing-help button')].find(b=>b.textContent.includes('撤销'));button.click();return true;})()");
+   await waitFor("document.querySelectorAll('.demo-ink-layer polyline').length===1","undo right-page stroke");
+   await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-drawing-help button')].find(b=>b.textContent.includes('重做'));button.click();return true;})()");
+   await waitFor("document.querySelectorAll('.demo-ink-layer polyline').length===2","redo right-page stroke");
+   await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-drawing-help button')].find(b=>b.textContent.includes('橡皮擦'));button.click();return true;})()");
+   await send("Input.dispatchMouseEvent",{type:"mousePressed",x,y,button:"left",clickCount:1},sessionId);
+   await send("Input.dispatchMouseEvent",{type:"mouseMoved",x:x+2,y:y+2,button:"left",buttons:1},sessionId);
+   await send("Input.dispatchMouseEvent",{type:"mouseReleased",x:x+2,y:y+2,button:"left",clickCount:1},sessionId);
+   await waitFor("document.querySelectorAll('.demo-ink-layer polyline').length===1","erase left-page stroke");
+   await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-drawing-help button')].find(b=>b.textContent.includes('画笔'));button.click();return true;})()");
+   await send("Input.dispatchMouseEvent",{type:"mousePressed",x,y,button:"left",clickCount:1},sessionId);
+   await send("Input.dispatchMouseEvent",{type:"mouseMoved",x:x+28,y:y+27,button:"left",buttons:1},sessionId);
+   await send("Input.dispatchMouseEvent",{type:"mouseReleased",x:x+28,y:y+27,button:"left",clickCount:1},sessionId);
+   await waitFor("document.querySelectorAll('.demo-ink-layer polyline').length===2","redraw erased left-page stroke");
+  }
   await waitFor("!!document.querySelector('.demo-ink-layer polyline')","completed ink stroke");
   await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-reader-actions button')].find(b=>b.textContent.includes('结束手绘'));button.click();return true;})()");
   await waitFor("!document.querySelector('.demo-ink-active')","freehand mode exits");
@@ -226,6 +248,36 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
   await waitFor("document.querySelector('.demo-app')?.dataset.demoReady==='yes'","ink reload");
   await evalPage("document.querySelector('.demo-book-card').click();true");
   await waitFor("!!document.querySelector('.demo-ink-layer polyline')","persistent saved ink stroke");
+
+  if(!mobile&&width>=1000){
+   await waitFor("document.querySelectorAll('.demo-physical-page').length===2&&document.querySelectorAll('.demo-ink-layer').length===2","persisted spread ink layers");
+   const overlayGeometry=async()=>evalPage("(()=>{const rect=e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height};};return {papers:[...document.querySelectorAll('.demo-physical-page')].map(rect),inks:[...document.querySelectorAll('.demo-ink-layer')].map(rect)};})()");
+   const assertOverlayAlignment=(geometry,mode)=>{
+    if(geometry.papers.length!==geometry.inks.length||!geometry.papers.length)
+     throw Error("Ink layer count changed in "+mode+" mode: "+JSON.stringify(geometry));
+    geometry.papers.forEach((paper,index)=>{
+     const ink=geometry.inks[index];
+     const delta=Math.max(Math.abs(paper.left-ink.left),Math.abs(paper.right-ink.right),
+      Math.abs(paper.top-ink.top),Math.abs(paper.bottom-ink.bottom));
+     if(delta>1.5)throw Error("Ink layer drifted from paper in "+mode+" mode: "+JSON.stringify({paper,ink,delta}));
+    });
+   };
+   assertOverlayAlignment(await overlayGeometry(),"double-page");
+   for(let cycle=0;cycle<3;cycle++){
+    await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-reader-actions button')].find(b=>b.textContent.includes('设置'));button.click();return true;})()");
+    await waitFor("!!document.querySelector('.demo-settings-panel')","drawing reflow settings");
+    await evalPage("document.querySelector('[role=\\\"switch\\\"][aria-label=\\\"桌面双页模式\\\"]').click();true");
+    await evalPage("document.querySelector('.demo-return-to-book').click();true");
+    await waitFor("!!document.querySelector('.demo-prose')&&document.querySelectorAll('.demo-physical-page').length===1","single-page drawing reflow");
+    assertOverlayAlignment(await overlayGeometry(),"single-page");
+    await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-reader-actions button')].find(b=>b.textContent.includes('设置'));button.click();return true;})()");
+    await waitFor("!!document.querySelector('.demo-settings-panel')","drawing spread settings");
+    await evalPage("document.querySelector('[role=\\\"switch\\\"][aria-label=\\\"桌面双页模式\\\"]').click();true");
+    await evalPage("document.querySelector('.demo-return-to-book').click();true");
+    await waitFor("!!document.querySelector('.demo-prose')&&document.querySelectorAll('.demo-physical-page').length===2","double-page drawing reflow");
+    assertOverlayAlignment(await overlayGeometry(),"double-page");
+   }
+  }
 
   await evalPage("(()=>{const target=document.querySelector('.demo-prose p');const node=target.firstChild;const range=document.createRange();range.setStart(node,0);range.setEnd(node,Math.min(9,node.textContent.length));const selection=getSelection();selection.removeAllRanges();selection.addRange(range);target.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));return true;})()");
   await waitFor("!!document.querySelector('.demo-selection-toolbar')","selection UI");
