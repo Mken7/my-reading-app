@@ -3,7 +3,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -35,13 +34,11 @@ import {
   rangesOverlap,
   parseReplies,
   titleFromFileName,
-  canRenameProfile,
 } from "./components/utils";
 import {
   loadUserProfile,
   saveUserProfile,
   loadMyBooks,
-  saveMyBooks,
   addToMyBooks,
   removeFromMyBooksStorage,
   saveActiveBookId,
@@ -137,12 +134,14 @@ function ReadingApp() {
     memberStyleMapRef.current = memberStyleMap;
   }, [memberStyleMap]);
 
-  // 初始化：加载本地存储
+  // Read browser-only persisted state after hydration, not during rendering.
   useEffect(() => {
-    const saved = loadUserProfile();
-    if (saved) setProfile(saved);
-    setMyBooks(loadMyBooks());
-    setAuthChecked(true);
+    const timer = window.setTimeout(() => {
+      setProfile(loadUserProfile());
+      setMyBooks(loadMyBooks());
+      setAuthChecked(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const refreshMyBooks = useCallback(() => {
@@ -352,12 +351,17 @@ function ReadingApp() {
     [profile, finalizeEnterRoom, refreshMyBooks],
   );
 
-  // 恢复会话
+  // Restore the previous room after account hydration.
+  // Deferring the callback avoids a synchronous effect-triggered state cascade.
   useEffect(() => {
     if (!authChecked || !profile || sessionRestoredRef.current) return;
-    sessionRestoredRef.current = true;
     const saved = loadActiveBookId();
-    if (saved) void beginEnterRoom(saved);
+    const timer = window.setTimeout(() => {
+      if (sessionRestoredRef.current) return;
+      sessionRestoredRef.current = true;
+      if (saved) void beginEnterRoom(saved);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [authChecked, profile, beginEnterRoom]);
 
   const occupiedPenKeys = useMemo(
@@ -430,6 +434,9 @@ function ReadingApp() {
     setCardTops({});
     setRoomMembers([]);
     setOnlineUsers([]);
+    setBookLoading(false);
+    setCloudLoading(false);
+    setRestoredScroll(false);
     setShowPenModal(false);
     closePopover();
   }, [closePopover]);
@@ -666,11 +673,10 @@ function ReadingApp() {
   }, []);
 
   // Presence（在线用户）
+  // Room exit explicitly clears onlineUsers, so the inactive subscription
+  // does not need to trigger a synchronous state update here.
   useEffect(() => {
-    if (!activeBookId || !profile || !roomPen) {
-      setOnlineUsers([]);
-      return;
-    }
+    if (!activeBookId || !profile || !roomPen) return;
 
     const presenceChannel = supabase.channel(`presence-${activeBookId}`, {
       config: { presence: { key: profile.userId } },
@@ -681,13 +687,16 @@ function ReadingApp() {
         const state = presenceChannel.presenceState();
         const users: OnlineUser[] = [];
         for (const key in state) {
-          const presences = state[key] as any[];
-          if (presences && presences.length > 0) {
-            users.push({
-              userId: key,
-              name: presences[0].name,
-              color: presences[0].color,
-            });
+          const presences = state[key];
+          const first = presences?.[0];
+          if (
+            first &&
+            "name" in first &&
+            "color" in first &&
+            typeof first.name === "string" &&
+            typeof first.color === "string"
+          ) {
+            users.push({ userId: key, name: first.name, color: first.color });
           }
         }
         setOnlineUsers(users);
@@ -707,15 +716,9 @@ function ReadingApp() {
   }, [activeBookId, profile, roomPen]);
 
   // 加载书籍和笔记 + Realtime 订阅
+  // leaveRoom clears previous book data and loading state.
   useEffect(() => {
-    if (!activeBookId || !profile || !roomPen) {
-      if (!activeBookId) {
-        setHighlights([]);
-        setNotes([]);
-      }
-      setCloudLoading(false);
-      return;
-    }
+    if (!activeBookId || !profile || !roomPen) return;
 
     let cancelled = false;
 
@@ -903,15 +906,17 @@ function ReadingApp() {
     [importing, beginEnterRoom, showToast],
   );
 
-  // 滚动恢复
+  // Restore scrolling after layout; a frame allows the rendered book to settle.
   useEffect(() => {
-    if (!bookLoading && activeBookId && !restoredScroll) {
+    if (bookLoading || !activeBookId || restoredScroll) return;
+    const frame = window.requestAnimationFrame(() => {
       const saved = loadScrollPosition(activeBookId);
-      if (saved && scrollRef.current) {
+      if (saved !== null && scrollRef.current) {
         scrollRef.current.scrollTop = saved;
       }
       setRestoredScroll(true);
-    }
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [bookLoading, activeBookId, restoredScroll]);
 
   // 滚动保存
@@ -988,7 +993,6 @@ function ReadingApp() {
           importing={importing}
           joinError={joinError}
           onOpenRename={() => setShowRenameModal(true)}
-          onImportTxt={handleImportTxt}
           onJoinRoom={handleJoinRoom}
           onEnterBook={(bookId) => void beginEnterRoom(bookId)}
           onRemoveBook={handleRemoveFromBookshelf}

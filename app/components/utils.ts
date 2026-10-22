@@ -112,7 +112,7 @@ export function mapRowsToState(
     const endOffset = row.end_index;
     const style = styleByUserName.get(row.user_name);
     const userColor = normalizeColor(row.user_color ?? style?.color);
-    const lineStyle = (row as any).line_style ?? style?.lineStyle ?? "wavy";
+    const lineStyle = row.line_style ?? style?.lineStyle ?? "wavy";
     const quote =
       row.quote?.trim() || bookText.slice(startOffset, endOffset) || "";
 

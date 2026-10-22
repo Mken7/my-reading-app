@@ -1,12 +1,6 @@
 import type { ReactNode } from "react";
 import type { Highlight } from "./types";
 
-type Props = {
-  text: string;
-  activeHighlights: Highlight[];
-  onHighlightClick?: (e: React.MouseEvent, highlightId: string) => void;
-};
-
 function getLuminance(hex: string) {
   if (!hex || !hex.startsWith('#')) return 0;
   const r = parseInt(hex.slice(1, 3), 16);

@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local recovery artifacts; keep these outside the repository history
+local-changes.patch
+reading-source.zip

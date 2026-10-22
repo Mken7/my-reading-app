@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Responsive V2 reading pages acceptance</title>
+<link rel="stylesheet" href="./reader-pages.css">
+</head>
+<body>
+<h1>V2 reading spread acceptance</h1>
+<p id="browser-result">PENDING</p>
+<div id="reader" class="v2-reader-pages"></div>
+<script type="module">
+import {
+  checkedReaderPages,readingPageIndex,spreadSize,READER_SPREAD_QUERY,
+} from "./compiled/readerLayout.js";
+const result=document.getElementById("browser-result");
+const assert=(value,message)=>{if(!value)throw new Error(message);};
+try{
+  const desktop=matchMedia(READER_SPREAD_QUERY).matches;
+  const pages=checkedReaderPages([
+    {chunk_index:10,body:"第一段的中文🐈。"},
+    {chunk_index:11,body:"第二段独立的批注空间。"},
+    {chunk_index:12,body:"不应自动读取第三段。"},
+  ],10,desktop);
+  assert(pages.length===spreadSize(desktop),"wrong responsive protected chunk count");
+  assert(readingPageIndex(10,1,desktop)===(desktop?12:11),
+    "reader turn step does not match page count");
+  const container=document.getElementById("reader");
+  for(const chunk of pages){
+    const article=document.createElement("article");
+    article.className="v2-reader-page";
+    article.tabIndex=0;
+    article.setAttribute("aria-label","段落 "+(chunk.chunk_index+1));
+    article.innerText=chunk.body;
+    container.append(article);
+  }
+  const columns=getComputedStyle(container).gridTemplateColumns
+    .split(" ").filter(Boolean);
+  assert(columns.length===(desktop?2:1),
+    "real CSS columns did not match matchMedia breakpoint: "+columns.join(","));
+  assert(container.querySelectorAll(".v2-reader-page").length===(desktop?2:1),
+    "CSS/DOM page count mismatch");
+  assert(container.scrollWidth<=document.documentElement.clientWidth+3,
+    "reader caused horizontal overflow");
+  const page=container.querySelector(".v2-reader-page");
+  page.focus();
+  assert(document.activeElement===page,"book page cannot receive keyboard focus");
+  result.textContent="READER_BROWSER_PASS:"+(!desktop?"mobile":"desktop");
+}catch(error){
+  result.textContent="READER_BROWSER_FAIL:"+String(error?.message ?? error);
+}
+</script>
+</body>
+</html>

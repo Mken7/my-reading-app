@@ -1,0 +1,143 @@
+name: Validate pull request
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: TXT and EPUB import unit tests
+        run: node --experimental-strip-types --test tests/unit/*.test.mjs
+      - name: Strict ESLint verification
+        run: npm run lint -- --max-warnings=0
+      - name: Build static site
+        run: npm run build
+        env:
+          DEPLOY_TARGET: github-pages
+      - name: Assert output was exported
+        run: test -f out/index.html
+      - name: Verify local static preview and hydrated JavaScript assets
+        run: node tests/browser/check-local-static-preview.mjs
+      - name: Browser smoke the exported V2 preview at narrow and desktop widths
+        run: node tests/browser/run-v2-static.cjs
+      - name: Verify no-login library, page turning, partner annotations, settings and bookmark
+        run: node tests/browser/run-v2-demo-cdp.mjs
+
+
+  browser-auth-screen:
+    # A disposable fake build, never pointed at Supabase or given credentials.
+    # The output is not uploaded or deployed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build isolated fake staging Auth login preview (no real credentials)
+        run: npm run build
+        env:
+          DEPLOY_TARGET: github-pages
+          NEXT_PUBLIC_ENABLE_V2_PREVIEW: "true"
+          NEXT_PUBLIC_V2_SUPABASE_URL: https://abcdefghijklmnopqrst.supabase.co
+          NEXT_PUBLIC_V2_SUPABASE_PUBLISHABLE_KEY: sb_publishable_CI_FAKE_NOT_A_REAL_KEY
+      - name: Inspect fake-key auth hydration with real 390px touch and desktop CDP
+        run: node tests/browser/run-v2-auth-cdp.mjs
+
+
+  browser-queue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Compile actual V2 queue modules to browser-readable JS
+        run: >
+          npx tsc
+          --module esnext --target es2022 --moduleResolution bundler
+          --rewriteRelativeImportExtensions
+          --lib dom,dom.iterable,es2022 --skipLibCheck
+          --rootDir lib/v2 --outDir tests/browser/compiled
+          lib/v2/browserAtomicPending.ts lib/v2/portablePending.ts
+          lib/v2/readingProgressSync.ts lib/v2/inkReflow.ts
+          lib/v2/readerLayout.ts lib/v2/pdf.ts lib/v2/epub.ts
+          lib/v2/authSafety.ts
+      - name: Exercise IndexedDB in a real headless browser
+        run: node tests/browser/run-indexeddb.cjs
+      - name: Verify single/mobile and two-page/desktop responsive reading layout
+        run: node tests/browser/run-reader.cjs
+      - name: Decode searchable PDF and reject empty scans in real Chromium
+        run: node tests/browser/run-pdf.cjs
+      - name: Extract EPUB XHTML and reject external script content in real Chromium
+        run: node tests/browser/run-epub.cjs
+
+  database-security:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: access_policy_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d access_policy_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check isolated database security policies
+        run: |
+          psql -v ON_ERROR_STOP=1 -f tests/sql/reading_security_v2_smoke.sql
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: test-only-password
+          PGDATABASE: access_policy_test
+
+  staging-three-accounts:
+    # Never run with secrets on PRs, forks, or an unrelated branch.
+    if: github.event_name == 'workflow_dispatch' && github.ref_name == 'feat/phase0-foundation-2026-10-18'
+    runs-on: ubuntu-latest
+    environment: v2-staging
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Live isolated staging Auth, rights, RLS, Realtime and cleanup
+        run: node tests/staging/run-supabase-e2e.mjs
+        env:
+          V2_ALLOW_MUTATING_STAGING_TEST: I_CONFIRM_ISOLATED_STAGING_ONLY
+          V2_STAGING_URL: ${{ secrets.V2_STAGING_URL }}
+          V2_STAGING_PROJECT_REF: ${{ secrets.V2_STAGING_PROJECT_REF }}
+          V2_STAGING_PUBLISHABLE_KEY: ${{ secrets.V2_STAGING_PUBLISHABLE_KEY }}
+          V2_STAGING_OWNER_EMAIL: ${{ secrets.V2_STAGING_OWNER_EMAIL }}
+          V2_STAGING_OWNER_PASSWORD: ${{ secrets.V2_STAGING_OWNER_PASSWORD }}
+          V2_STAGING_PARTNER_EMAIL: ${{ secrets.V2_STAGING_PARTNER_EMAIL }}
+          V2_STAGING_PARTNER_PASSWORD: ${{ secrets.V2_STAGING_PARTNER_PASSWORD }}
+          V2_STAGING_OUTSIDER_EMAIL: ${{ secrets.V2_STAGING_OUTSIDER_EMAIL }}
+          V2_STAGING_OUTSIDER_PASSWORD: ${{ secrets.V2_STAGING_OUTSIDER_PASSWORD }}

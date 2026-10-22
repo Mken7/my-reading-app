@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>PDF.js safe import acceptance</title>
+<script type="importmap">
+{"imports":{"pdfjs-dist/legacy/build/pdf.mjs":"/pdfjs/pdf.mjs"}}
+</script>
+</head>
+<body>
+<h1>PDF local import safety test</h1>
+<p id="browser-result">PENDING</p>
+<script type="module">
+import {preparePdf} from "./compiled/pdf.js";
+const output=document.getElementById("browser-result");
+function assert(value,message){if(!value)throw Error(message);}
+function tinyPdf(message){
+  const contents="BT /F1 16 Tf 72 740 Td ("+
+    message.replace(/[()\\]/g,char=>"\\"+char)+") Tj ET";
+  const objects=[
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+    "<< /Length "+contents.length+" >>\nstream\n"+contents+"\nendstream",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let source="%PDF-1.4\n";
+  const offsets=[0];
+  for(const [i,entry] of objects.entries()){
+    offsets.push(source.length);
+    source+=(i+1)+" 0 obj\n"+entry+"\nendobj\n";
+  }
+  const xref=source.length;
+  source+="xref\n0 "+(objects.length+1)+"\n0000000000 65535 f \n";
+  for(const offset of offsets.slice(1)){
+    source+=String(offset).padStart(10,"0")+" 00000 n \n";
+  }
+  source+="trailer\n<< /Size "+(objects.length+1)+" /Root 1 0 R >>\n"+
+    "startxref\n"+xref+"\n%%EOF";
+  return new TextEncoder().encode(source);
+}
+try{
+  const plan=await preparePdf(tinyPdf("Hello from searchable PDF"),
+    "/pdfjs/pdf.worker.min.mjs");
+  assert(plan.chunks.some(chunk=>chunk.includes("Hello from searchable PDF")),
+    "real PDF.js decoder failed to extract page text");
+  assert(plan.chapters.length===1 && plan.chapters[0].chunkIndex===0,
+    "PDF page was not mapped to an upload-safe chapter index");
+  assert(!("onclick" in plan) && typeof plan.chunks[0]==="string",
+    "PDF parser returned an executable object");
+  let rejected=false;
+  try{
+    await preparePdf(tinyPdf(""),"/pdfjs/pdf.worker.min.mjs");
+  }catch(error){rejected=String(error).includes("可提取")||String(error).includes("扫描");}
+  assert(rejected,"image-only/empty PDF page not explicitly rejected");
+  output.textContent="PDF_BROWSER_PASS";
+}catch(error){
+  output.textContent="PDF_BROWSER_FAIL:"+String(error?.message??error)+
+    " CAUSE:"+String(error?.cause?.message??error?.cause??"none");
+}
+</script>
+</body>
+</html>

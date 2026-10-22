@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"/><title>V2 draft queue browser acceptance</title></head>
+<body>
+<main>
+  <h1>V2 IndexedDB acceptance</h1>
+  <p id="browser-result">PENDING</p>
+</main>
+<script type="module">
+import { addAtomicPending, listAtomicPending, recoverAtomicPending, removeAtomicPending } from "./compiled/atomicPending.js";
+import { browserAtomicPendingStore, probeBrowserDraftDatabase } from "./compiled/browserAtomicPending.js";
+import { exportEncryptedPendingBundle, importEncryptedPendingBundle } from "./compiled/portablePending.js";
+import { reconcileCursor, validReadingCursor } from "./compiled/readingProgressSync.js";
+import { groupedVisualLines, singleLineInkBounds } from "./compiled/inkReflow.js";
+import {recoveryReturnUrl,validStagingEndpoint,validNewPassword,authEventView} from "./compiled/authSafety.js";
+
+const status=document.getElementById("browser-result");
+function assert(value,message) {
+  if (!value) throw new Error(message);
+}
+const uuid=(n)=>"12345678-1234-4123-8123-"+String(n).padStart(12,"0");
+const scope={
+  userId:"browser-e2e-user",roomId:"browser-e2e-room",kind:"highlight",targetId:"71",
+};
+const passphrase="browser-idb-integration-secret";
+const message=(n,privacy="private")=>JSON.stringify({
+  v:2,body:"从浏览器里加密的汉字😀 "+n,operationId:uuid(n),
+  start:0,end:2,visibility:privacy,
+});
+try {
+  await probeBrowserDraftDatabase();
+  await Promise.all([
+    addAtomicPending(browserAtomicPendingStore,scope,message(1),passphrase),
+    addAtomicPending(browserAtomicPendingStore,scope,message(2),passphrase),
+    addAtomicPending(browserAtomicPendingStore,scope,message(3,"shared"),passphrase),
+  ]);
+  const all=await listAtomicPending(browserAtomicPendingStore,scope);
+  assert(all.length===3,"concurrent write count mismatch");
+  assert(all.includes(uuid(1)) && all.includes(uuid(2)) && all.includes(uuid(3)),
+    "concurrent writes lost UUID");
+  assert(await recoverAtomicPending(browserAtomicPendingStore,scope,uuid(3),passphrase)===
+    message(3,"shared"),"recovery changed shared/privacy metadata");
+  const exportFile=await exportEncryptedPendingBundle(browserAtomicPendingStore,scope);
+  assert(!exportFile.includes("从浏览器里加密") &&
+    !exportFile.includes("browser-e2e-user"),"plaintext leaked into exported bundle");
+  let rejected=false;
+  try {
+    await recoverAtomicPending(browserAtomicPendingStore,scope,uuid(1),"incorrect-passphrase-1234");
+  } catch { rejected=true; }
+  assert(rejected,"incorrect passphrase decrypted protected draft");
+  rejected=false;
+  try {
+    await addAtomicPending(browserAtomicPendingStore,scope,message(1,"shared"),passphrase);
+  } catch { rejected=true; }
+  assert(rejected,"duplicate UUID overwrote old visibility");
+  await removeAtomicPending(browserAtomicPendingStore,scope,uuid(2));
+  const after=await listAtomicPending(browserAtomicPendingStore,scope);
+  assert(after.length===2 && !after.includes(uuid(2)),
+    "delete removed incorrect rows");
+  assert(await recoverAtomicPending(browserAtomicPendingStore,scope,uuid(1),passphrase)===
+    message(1),"durable read failed");
+  // Operations above each open a new IDBDatabase connection; no persistent
+  // in-memory index is available to hide disk read failures.
+  assert((await listAtomicPending(browserAtomicPendingStore,scope)).length===2,
+    "new IndexedDB transaction lost stored state");
+  await Promise.all([uuid(1),uuid(3)].map(id=>
+    removeAtomicPending(browserAtomicPendingStore,scope,id)));
+  const imported=await importEncryptedPendingBundle(
+    browserAtomicPendingStore,scope,exportFile,passphrase,
+  );
+  assert(imported===3,"encrypted file import lost a note");
+  assert(await recoverAtomicPending(browserAtomicPendingStore,scope,uuid(3),passphrase)===
+    message(3,"shared"),"portable backup changed visible scope");
+  await Promise.all([uuid(1),uuid(2),uuid(3)].map(id=>
+    removeAtomicPending(browserAtomicPendingStore,scope,id)));
+  const initial={chunk_index:3,char_offset:1,revision:1};
+  const changed={chunk_index:3,char_offset:4,revision:2};
+  assert(validReadingCursor(changed),"invalid Unicode cursor rejected");
+  const result=reconcileCursor(initial,changed,{
+    chunk_index:3,char_offset:1,
+  },null);
+  assert(result.changed && result.conflict?.desired.char_offset===1 &&
+    result.conflict.remote.char_offset===4,
+    "newer remote character position silently replaced local reading point");
+  assert(!reconcileCursor(changed,initial,{chunk_index:3,char_offset:1},
+    result.conflict).changed,"out-of-order server reply downgraded local cursor");
+
+  const sender=new BroadcastChannel("reading-v2-test-invalidation");
+  const receiver=new BroadcastChannel("reading-v2-test-invalidation");
+  const received=new Promise((resolve,reject)=>{
+    receiver.onmessage=(event)=>resolve(event.data);
+    setTimeout(()=>reject(new Error("same-device progress invalidation timed out")),2000);
+  });
+  sender.postMessage("cursor-updated");
+  assert(await received==="cursor-updated","browser tabs did not receive cursor change");
+  sender.close();
+  receiver.close();
+  // Use actual DOM layout/Range data, not mocked rectangles: highlighted
+  // inline spans can share a line or reflow onto multiple lines.
+  const outer=document.createElement("div");
+  outer.style.cssText="width:420px; font:18px/1.6 sans-serif; white-space:normal;";
+  const marked=document.createElement("span");
+  marked.textContent="中文文字甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳";
+  outer.append(marked);
+  document.body.append(outer);
+  const range=document.createRange();
+  range.selectNodeContents(marked);
+  function rects() {
+    return [...range.getClientRects()].map(r=>({
+      left:r.left,top:r.top,width:r.width,height:r.height,
+    }));
+  }
+  function parentRect() {
+    const r=outer.getBoundingClientRect();
+    return {left:r.left,top:r.top,width:r.width,height:r.height};
+  }
+  assert(groupedVisualLines(rects()).length===1,
+    "full width CJK selection should occupy one visual line");
+  assert(singleLineInkBounds(rects(),parentRect())!==null,
+    "single-line drawing anchor could not render");
+  outer.style.width="80px";
+  assert(groupedVisualLines(rects()).length>1,
+    "browser fixture failed to wrap the selected text");
+  assert(singleLineInkBounds(rects(),parentRect())===null,
+    "reflow erroneously stretches drawing across wrapped lines");
+  outer.style.width="420px";
+  assert(singleLineInkBounds(rects(),parentRect())!==null,
+    "drawing did not return to its original text anchor after reflow");
+  outer.remove();
+
+  // Actual same-origin browser URI: strip query/hash tokens from reset links.
+  const resetPage=location.origin+"/v2/?code=super-secret#access_token=private";
+  assert(recoveryReturnUrl(resetPage)===location.origin+"/v2/",
+    "password recovery leaked a token or accepted external return destinations");
+  assert(recoveryReturnUrl(location.origin+"/another-route")===null,
+    "password recovery accepted an arbitrary route");
+  assert(validStagingEndpoint("https://safe-staging.supabase.co") &&
+    !validStagingEndpoint("https://warhfmpfnlgzofbeuikb.supabase.co") &&
+    !validStagingEndpoint("https://safe-staging.supabase.co.bad-domain.com"),
+    "staging endpoint allowed unsafe or legacy Supabase origin");
+  assert(!validNewPassword("short") && validNewPassword("a".repeat(12)),
+    "minimum-password validation differs in real browser");
+  assert(authEventView("SIGNED_IN",false)==="normal" &&
+    authEventView("PASSWORD_RECOVERY",false)==="begin_recovery" &&
+    authEventView("USER_UPDATED",true)==="retain_recovery" &&
+    authEventView("SIGNED_OUT",true)==="signed_out",
+    "sign-in erroneously authorized a recovery-only password change");
+
+  status.textContent="BROWSER_TEST_PASS";
+} catch(error) {
+  status.textContent="BROWSER_TEST_FAIL: "+String(error && error.message || error);
+}
+</script>
+</body></html>

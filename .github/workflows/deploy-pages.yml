@@ -16,6 +16,8 @@ concurrency:
 
 jobs:
   build:
+    # Never deploy a feature/draft PR through manual workflow_dispatch.
+    if: github.ref == 'refs/heads/main' && github.repository == 'Mken7/my-reading-app'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,7 +28,16 @@ jobs:
           cache: npm
 
       - run: npm ci
-      - run: npm run build
+
+      - name: Build static GitHub Pages site
+        run: npm run build
+        env:
+          DEPLOY_TARGET: github-pages
+          # Do not accidentally enable staging Auth on the public Pages site.
+          NEXT_PUBLIC_ENABLE_V2_PREVIEW: "false"
+
+      - name: Validate static export
+        run: test -f out/index.html
 
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -34,6 +45,7 @@ jobs:
 
   deploy:
     needs: build
+    if: github.ref == 'refs/heads/main' && github.repository == 'Mken7/my-reading-app'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

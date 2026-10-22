@@ -1,0 +1,85 @@
+/* Module 05: true consecutive, independently annotated reading pages.
+ * At narrow widths only the current immutable chunk is rendered. */
+.v2-reader-pages {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  width: 100%;
+  min-width: 0;
+  margin-top: 1rem;
+  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+  align-items: stretch;
+}
+.v2-reader-page {
+  min-width: 0;
+  min-height: 390px;
+  padding: clamp(18px, 4vw, 38px);
+  border: 1px solid #e5dcd1;
+  border-radius: 13px;
+  box-shadow: 0 8px 26px rgba(72,54,39,.07);
+  overflow-wrap: anywhere;
+  font-family: "Noto Serif SC","Songti SC","SimSun",Georgia,serif;
+  color: #292725;
+  scroll-margin-top: 20px;
+}
+.v2-reader-page:focus-visible {
+  outline: 3px solid #3a65a7;
+  outline-offset: 3px;
+}
+.v2-reader-page .select-text {
+  text-align: justify;
+  text-justify: inter-ideograph;
+  line-break: strict;
+  overflow-wrap: anywhere;
+}
+.v2-reader-folio {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding-bottom: .7rem;
+  border-bottom: 1px solid rgba(109,91,68,.16);
+  font: 12px/1.5 system-ui,sans-serif;
+  color: #756a5e;
+  letter-spacing: .03em;
+}
+.v2-reader-page-empty {
+  color: #817668;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+@media (min-width: 1100px) {
+  .v2-reader-pages {
+    grid-template-columns: repeat(2,minmax(0,1fr));
+    position: relative;
+    gap: clamp(12px,2vw,24px);
+    padding-bottom: 1.5rem;
+  }
+  .v2-reader-page {
+    min-height: min(70vh,780px);
+    border-radius: 12px 4px 4px 12px;
+  }
+  .v2-reader-page:nth-child(2) { border-radius: 4px 12px 12px 4px; }
+  .v2-reader-pages::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 12px;
+    bottom: 18px;
+    width: 1px;
+    pointer-events: none;
+    background: linear-gradient(transparent,rgba(101,84,65,.2) 15%,rgba(101,84,65,.2) 85%,transparent);
+    transform: translateX(-50%);
+  }
+}
+@media (prefers-contrast: more) {
+  .v2-reader-page { border: 2px solid #59534a; box-shadow: none; }
+  .v2-reader-folio { color: #3a3936; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .v2-reader-page { scroll-behavior: auto; }
+}
