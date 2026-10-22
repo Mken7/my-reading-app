@@ -278,6 +278,7 @@ export function DemoLibrary() {
   const pendingReflowAnchorRef=useRef<{key:string;ratio:number}|null>(null);
   const pendingBookAnchorRef=useRef<{chapterIndex:number;ratio:number}|null>(null);
   const progressPreviewRef=useRef<number|null>(null);
+  const progressPointerActiveRef=useRef(false);
   const jumpToChapterEnd=useRef(false);
   const [kind,setKind] = useState<string>("全部");
   const [search,setSearch] = useState("");
@@ -602,6 +603,26 @@ export function DemoLibrary() {
     const ratio=Math.min(1,Math.max(0,value));
     progressPreviewRef.current=ratio;
     setProgressPreview(ratio);
+  }
+  function pointerProgressRatio(event:PointerEvent<HTMLInputElement>){
+    const rect=event.currentTarget.getBoundingClientRect();
+    return Math.min(1,Math.max(0,(event.clientX-rect.left)/Math.max(1,rect.width)));
+  }
+  function beginProgressPointer(event:PointerEvent<HTMLInputElement>){
+    progressPointerActiveRef.current=true;
+    try{event.currentTarget.setPointerCapture(event.pointerId);}catch{/* Synthetic touch tests have no native capture target. */}
+    previewWholeBookProgress(pointerProgressRatio(event));
+  }
+  function moveProgressPointer(event:PointerEvent<HTMLInputElement>){
+    if(progressPointerActiveRef.current)previewWholeBookProgress(pointerProgressRatio(event));
+  }
+  function endProgressPointer(event:PointerEvent<HTMLInputElement>){
+    if(!progressPointerActiveRef.current)return;
+    progressPointerActiveRef.current=false;
+    try{
+      if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);
+    }catch{/* A cancelled or synthetic pointer can already be released. */}
+    jumpToWholeBookProgress(pointerProgressRatio(event));
   }
   function jumpToWholeBookProgress(value:number){
     const ratio=Math.min(1,Math.max(0,value));
@@ -1243,8 +1264,9 @@ export function DemoLibrary() {
                         aria-label="全书阅读进度" aria-valuetext={progressAriaText}
                         aria-describedby="demo-progress-label"
                         onChange={event=>previewWholeBookProgress(Number(event.currentTarget.value)/100)}
-                        onPointerUp={event=>jumpToWholeBookProgress(Number(event.currentTarget.value)/100)}
-                        onPointerCancel={()=>{progressPreviewRef.current=null;setProgressPreview(null);}}
+                        onPointerDown={beginProgressPointer} onPointerMove={moveProgressPointer}
+                        onPointerUp={endProgressPointer}
+                        onPointerCancel={()=>{progressPointerActiveRef.current=false;progressPreviewRef.current=null;setProgressPreview(null);}}
                         onKeyUp={event=>{
                           if(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End","PageUp","PageDown"].includes(event.key))
                             jumpToWholeBookProgress(Number(event.currentTarget.value)/100);
