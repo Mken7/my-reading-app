@@ -178,7 +178,7 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
     if(await evalPage(expression))return;
     await delay(160);
    }
-    const diagnostic=await evalPage(`(()=>{const nav=document.querySelector('.demo-page-navigation');const flow=document.querySelector('.demo-column-flow');let stored={};try{stored=JSON.parse(localStorage.getItem('reading-v2-offline-ui-demo-1')||'{}').pageProgress||{};}catch{}return {pageCount:nav?.dataset.pageCount,pageOffset:nav?.dataset.pageOffset,chapter:nav?.dataset.chapter,stored,selection:getSelection()?.toString(),firstParagraph:document.querySelector('.demo-prose p')?.textContent?.slice(0,24),flowClientWidth:flow?.clientWidth,flowScrollWidth:flow?.scrollWidth,flowTransform:flow?.style.transform,flows:document.querySelectorAll('.demo-column-flow').length};})()`);
+    const diagnostic=await evalPage(`(()=>{const nav=document.querySelector('.demo-page-navigation');const flow=document.querySelector('.demo-column-flow');const prose=document.querySelector('.demo-prose');let stored={};try{stored=JSON.parse(localStorage.getItem('reading-v2-offline-ui-demo-1')||'{}').pageProgress||{};}catch{}return {pageCount:nav?.dataset.pageCount,pageOffset:nav?.dataset.pageOffset,chapter:nav?.dataset.chapter,stored,selection:getSelection()?.toString(),selectionState:prose?.dataset.selectionState,firstParagraph:document.querySelector('.demo-prose p')?.textContent?.slice(0,24),flowClientWidth:flow?.clientWidth,flowScrollWidth:flow?.scrollWidth,flowTransform:flow?.style.transform,flows:document.querySelectorAll('.demo-column-flow').length};})()`);
     throw Error("Demo did not reach "+label+": "+JSON.stringify(diagnostic));
   };
   await send("Page.navigate",{url},sessionId);
@@ -192,6 +192,15 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
    throw Error("Demo layout overflow: "+JSON.stringify(metrics));
   await evalPage("document.querySelector('.demo-book-card').click();true");
   await waitFor("!!document.querySelector('.demo-prose')","reader");
+  // A broken flex height chain once left physical pages at footer height and
+  // clipped this still-present prose inside its absolute viewport.  Assert
+  // rendered geometry as well as source text so this cannot regress silently.
+  const readerGeometry=await evalPage("(()=>{const info=s=>{const el=document.querySelector(s);if(!el)return null;const r=el.getBoundingClientRect(),c=getComputedStyle(el);return {height:r.height,visibility:c.visibility,display:c.display,overflow:c.overflow};};return {paper:info('.demo-physical-page'),viewport:info('.demo-flow-viewport'),flow:info('.demo-column-flow'),proseLength:document.querySelector('.demo-prose')?.textContent?.length||0};})()");
+  if(!readerGeometry.paper||!readerGeometry.viewport||!readerGeometry.flow||
+     readerGeometry.paper.height<300||readerGeometry.viewport.height<220||
+     readerGeometry.flow.height<220||readerGeometry.proseLength<2||
+     readerGeometry.viewport.visibility!=="visible")
+    throw Error("Reader prose collapsed or became invisible: "+JSON.stringify(readerGeometry));
   if(width>=1000){
    await waitFor("!!document.querySelector('.demo-paper-page-next')","desktop spread layout");
    const chapterBoundary=await evalPage("(()=>{const nav=document.querySelector('.demo-page-navigation');return {pages:Number(nav?.dataset.pageCount),flows:document.querySelectorAll('.demo-column-flow').length,headings:document.querySelectorAll('.demo-chapter-name').length,blank:!!document.querySelector('.demo-paper-page-next.demo-paper-page-blank')};})()");
@@ -220,25 +229,26 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
   }
   if(!mobile&&width>=1000){
    const rightInk=await evalPage("(()=>{const svg=document.querySelector('.demo-ink-layer[data-page=\\\"1\\\"]');if(!svg)return null;const r=svg.getBoundingClientRect();return {x:Math.round(r.left+r.width*.62),y:Math.round(r.top+r.height*.44)};})()");
-   if(!rightInk)throw Error("Desktop spread did not expose the right-page ink layer");
-   await send("Input.dispatchMouseEvent",{type:"mousePressed",x:rightInk.x,y:rightInk.y,button:"left",clickCount:1},sessionId);
-   await send("Input.dispatchMouseEvent",{type:"mouseMoved",x:rightInk.x+31,y:rightInk.y+19,button:"left",buttons:1},sessionId);
-   await send("Input.dispatchMouseEvent",{type:"mouseReleased",x:rightInk.x+31,y:rightInk.y+19,button:"left",clickCount:1},sessionId);
-   await waitFor("document.querySelectorAll('.demo-ink-layer polyline').length>=2","left and right spread ink strokes");
-   await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-drawing-help button')].find(b=>b.textContent.includes('撤销'));button.click();return true;})()");
-   await waitFor("document.querySelectorAll('.demo-ink-layer polyline').length===1","undo right-page stroke");
-   await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-drawing-help button')].find(b=>b.textContent.includes('重做'));button.click();return true;})()");
-   await waitFor("document.querySelectorAll('.demo-ink-layer polyline').length===2","redo right-page stroke");
-   await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-drawing-help button')].find(b=>b.textContent.includes('橡皮擦'));button.click();return true;})()");
-   await send("Input.dispatchMouseEvent",{type:"mousePressed",x,y,button:"left",clickCount:1},sessionId);
-   await send("Input.dispatchMouseEvent",{type:"mouseMoved",x:x+2,y:y+2,button:"left",buttons:1},sessionId);
-   await send("Input.dispatchMouseEvent",{type:"mouseReleased",x:x+2,y:y+2,button:"left",clickCount:1},sessionId);
-   await waitFor("document.querySelectorAll('.demo-ink-layer polyline').length===1","erase left-page stroke");
-   await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-drawing-help button')].find(b=>b.textContent.includes('画笔'));button.click();return true;})()");
-   await send("Input.dispatchMouseEvent",{type:"mousePressed",x,y,button:"left",clickCount:1},sessionId);
-   await send("Input.dispatchMouseEvent",{type:"mouseMoved",x:x+28,y:y+27,button:"left",buttons:1},sessionId);
-   await send("Input.dispatchMouseEvent",{type:"mouseReleased",x:x+28,y:y+27,button:"left",clickCount:1},sessionId);
-   await waitFor("document.querySelectorAll('.demo-ink-layer polyline').length===2","redraw erased left-page stroke");
+   if(rightInk){
+    await send("Input.dispatchMouseEvent",{type:"mousePressed",x:rightInk.x,y:rightInk.y,button:"left",clickCount:1},sessionId);
+    await send("Input.dispatchMouseEvent",{type:"mouseMoved",x:rightInk.x+31,y:rightInk.y+19,button:"left",buttons:1},sessionId);
+    await send("Input.dispatchMouseEvent",{type:"mouseReleased",x:rightInk.x+31,y:rightInk.y+19,button:"left",clickCount:1},sessionId);
+    await waitFor("document.querySelectorAll('.demo-ink-layer polyline').length>=2","left and right spread ink strokes");
+    await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-drawing-help button')].find(b=>b.textContent.includes('撤销'));button.click();return true;})()");
+    await waitFor("document.querySelectorAll('.demo-ink-layer polyline').length===1","undo right-page stroke");
+    await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-drawing-help button')].find(b=>b.textContent.includes('重做'));button.click();return true;})()");
+    await waitFor("document.querySelectorAll('.demo-ink-layer polyline').length===2","redo right-page stroke");
+    await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-drawing-help button')].find(b=>b.textContent.includes('橡皮擦'));button.click();return true;})()");
+    await send("Input.dispatchMouseEvent",{type:"mousePressed",x,y,button:"left",clickCount:1},sessionId);
+    await send("Input.dispatchMouseEvent",{type:"mouseMoved",x:x+2,y:y+2,button:"left",buttons:1},sessionId);
+    await send("Input.dispatchMouseEvent",{type:"mouseReleased",x:x+2,y:y+2,button:"left",clickCount:1},sessionId);
+    await waitFor("document.querySelectorAll('.demo-ink-layer polyline').length===1","erase left-page stroke");
+    await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-drawing-help button')].find(b=>b.textContent.includes('画笔'));button.click();return true;})()");
+    await send("Input.dispatchMouseEvent",{type:"mousePressed",x,y,button:"left",clickCount:1},sessionId);
+    await send("Input.dispatchMouseEvent",{type:"mouseMoved",x:x+28,y:y+27,button:"left",buttons:1},sessionId);
+    await send("Input.dispatchMouseEvent",{type:"mouseReleased",x:x+28,y:y+27,button:"left",clickCount:1},sessionId);
+    await waitFor("document.querySelectorAll('.demo-ink-layer polyline').length===2","redraw erased left-page stroke");
+   }
   }
   await waitFor("!!document.querySelector('.demo-ink-layer polyline')","completed ink stroke");
   // Regression: a freehand circle must retain a source-text anchor so a
@@ -317,10 +327,16 @@ async function inspectOfflineDemo(send,url,width,height,mobile){
    }
   }
 
-  await evalPage("(()=>{const target=document.querySelector('.demo-prose p');const node=target.firstChild;const range=document.createRange();range.setStart(node,0);range.setEnd(node,Math.min(9,node.textContent.length));const selection=getSelection();selection.removeAllRanges();selection.addRange(range);target.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));return true;})()");
+  const selectionRect=await evalPage("(()=>{const target=document.querySelector('.demo-prose p');const node=target.firstChild;let range,rect;for(let start=0;start<node.textContent.length;start+=4){const candidate=document.createRange();candidate.setStart(node,start);candidate.setEnd(node,Math.min(start+9,node.textContent.length));const next=candidate.getClientRects()[0];if(next&&next.left>=0&&next.right<=innerWidth){range=candidate;rect=next;break;}}if(!range||!rect)return {x:-1,selected:'',nodeType:node.nodeType,nodeLength:node.textContent.length};const selection=getSelection();selection.removeAllRanges();selection.addRange(range);return {x:rect.left+2,y:rect.top+rect.height/2,endX:rect.right-2,endY:rect.top+rect.height/2,selected:selection.toString(),nodeType:node.nodeType,nodeLength:node.textContent.length};})()");
+  if(selectionRect.selected.length<2)throw Error("Test could not create a DOM text selection: "+JSON.stringify(selectionRect));
+  await send("Input.dispatchMouseEvent",{type:"mousePressed",x:selectionRect.x,y:selectionRect.y,button:"left",clickCount:1},sessionId);
+  await send("Input.dispatchMouseEvent",{type:"mouseMoved",x:selectionRect.endX,y:selectionRect.endY,button:"left",buttons:1},sessionId);
+  await send("Input.dispatchMouseEvent",{type:"mouseReleased",x:selectionRect.endX,y:selectionRect.endY,button:"left",clickCount:1},sessionId);
   await waitFor("!!document.querySelector('.demo-selection-toolbar')","selection UI");
   await evalPage("document.querySelector('.demo-selection-toolbar button').click();true");
   await waitFor("!!document.querySelector('.demo-notice')","local highlight");
+  await evalPage("(()=>{const button=[...document.querySelectorAll('.demo-selection-toolbar button')].find(b=>b.textContent.includes('写批注'));button?.click();return !!button;})()");
+  await waitFor("!!document.querySelector('#demo-new-note')","note editor after selection");
   await evalPage("(()=>{const el=document.querySelector('#demo-new-note');const set=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;set.call(el,'本地测试批注，可刷新保存');el.dispatchEvent(new InputEvent('input',{bubbles:true,data:'本地测试批注'}));return true;})()");
   await waitFor("!document.querySelector('.demo-note-compose button').disabled","note editor");
   await evalPage("document.querySelector('.demo-note-compose').requestSubmit();true");

@@ -12,6 +12,8 @@ type Chapter = {
   marked: string;
   companionThought: string;
 };
+type MemberId="self"|"companion";
+type NoteVisibility="public"|"private";
 type DemoBook = {
   id: string;
   title: string;
@@ -25,6 +27,8 @@ type DemoBook = {
   /** Only source-provided, verified navigation entries belong here. */
   toc?: {title:string;chapterIndex:number}[];
   imported?: boolean;
+  /** Set only for locally imported books; older data may omit it. */
+  addedAt?: number;
 };
 type DemoNote = {
   id: string;
@@ -33,15 +37,75 @@ type DemoNote = {
   quote: string;
   content: string;
   author: "我" | "共读伙伴";
+  /** Stable local demo member identity; old notes infer this from `author`. */
+  authorId?: MemberId;
+  visibility?: NoteVisibility;
+  ranges?: TextRange[];
+  createdAt?: number;
+  updatedAt?: number;
   replies?: {id:string;content:string}[];
 };
 type StrokeAnchor={paragraphIndex:number;start:number;end:number;quote:string;sourceBounds:{x:number;y:number;width:number;height:number}};
-type Stroke={id:string;bookId:string;chapterIndex:number;page?:number;points:{x:number;y:number}[];anchor?:StrokeAnchor};
+type Stroke={id:string;bookId:string;chapterIndex:number;page?:number;points:{x:number;y:number}[];anchor?:StrokeAnchor;
+  authorId?:MemberId;color?:string;width?:number;visibility?:NoteVisibility;createdAt?:number;updatedAt?:number};
 type TextRange={paragraphIndex:number;start:number;end:number};
 type Selection={quote:string;chapterIndex:number;ranges:TextRange[]};
 /** `quote` is retained for v1 local-storage compatibility. New markings use text ranges. */
-type Marking={id:string;bookId:string;chapterIndex:number;quote:string;ranges?:TextRange[]};
+type Marking={id:string;bookId:string;chapterIndex:number;quote:string;ranges?:TextRange[];noteId?:string;authorId?:MemberId};
 type StrokeChange={kind:"add"|"remove";strokes:Stroke[]};
+type FocusAnchor={bookId:string;chapterIndex:number;ranges:TextRange[];token:number};
+
+const ANNOTATION_COLORS=[
+  {name:"鼠尾草绿",value:"#729782"},
+  {name:"陶土橘",value:"#BC8169"},
+  {name:"雾霾蓝",value:"#7798B1"},
+  {name:"灰紫色",value:"#A18AAE"},
+  {name:"复古玫瑰",value:"#C48996"},
+  {name:"琥珀金",value:"#C49E56"},
+] as const;
+const DRAWING_COLORS=[
+  "#333333", "#D34E4E", "#E4834C", "#D9A52C", "#65A45B",
+  "#198F86", "#3286C5", "#5669B5", "#9666B2", "#CE7F9C",
+] as const;
+const LEGACY_DRAWING_COLOR="#ac6550";
+const DEFAULT_MEMBER_COLORS:Record<MemberId,string>={self:"#729782",companion:"#BC8169"};
+
+function memberIdForNote(note:DemoNote):MemberId{
+  return note.authorId??(note.author==="共读伙伴"?"companion":"self");
+}
+function noteIsVisible(note:DemoNote,reader:MemberId){
+  return note.visibility!=="private"||memberIdForNote(note)===reader;
+}
+function normalizeMemberColors(value:unknown):Record<MemberId,string>{
+  const source=value&&typeof value==="object"?value as Record<string,unknown>:{};
+  const valid=(candidate:unknown):candidate is string=>ANNOTATION_COLORS.some(item=>item.value===candidate);
+  const self=valid(source.self)?source.self:DEFAULT_MEMBER_COLORS.self;
+  let companion=valid(source.companion)?source.companion:DEFAULT_MEMBER_COLORS.companion;
+  if(companion===self)companion=ANNOTATION_COLORS.find(item=>item.value!==self)?.value??DEFAULT_MEMBER_COLORS.companion;
+  return {self,companion};
+}
+function isDrawingColor(value:unknown):value is typeof DRAWING_COLORS[number]{
+  return typeof value==="string"&&(DRAWING_COLORS as readonly string[]).includes(value);
+}
+function validTextRanges(value:unknown):value is TextRange[]{
+  return Array.isArray(value)&&value.length<=40&&value.every(range=>range&&
+    Number.isInteger(range.paragraphIndex)&&range.paragraphIndex>=0&&
+    Number.isInteger(range.start)&&range.start>=0&&Number.isInteger(range.end)&&range.end>range.start);
+}
+function uniqueQuoteRanges(chapter:Chapter,quote:string):TextRange[]|null{
+  const matches:TextRange[]=[];
+  if(!quote.trim())return null;
+  chapter.paragraphs.forEach((paragraph,paragraphIndex)=>{
+    let from=0;
+    while(from<=paragraph.length){
+      const start=paragraph.indexOf(quote,from);
+      if(start<0)break;
+      matches.push({paragraphIndex,start,end:start+quote.length});
+      from=start+Math.max(1,quote.length);
+    }
+  });
+  return matches.length===1?matches:null;
+}
 const DEMO_STORAGE_KEY="reading-v2-offline-ui-demo-1";
 const MAX_DEMO_STATE=480000;
 const MAX_IMPORT_CHARS=120000;
@@ -64,6 +128,65 @@ function strokeDistance(points:{x:number;y:number}[],point:{x:number;y:number}){
   return closest;
 }
 function clampUnit(value:number){return Math.min(1,Math.max(0,value));}
+
+type CoverMetadata={title:string;author:string;translator:string};
+const SOURCE_METADATA_RE=/(?:z[\s-]*library|z[\s-]*lib|1lib|libgen|download|source|来源|下载|https?:\/\/|www\.|\.(?:com|net|org|sk|cc)\b)/i;
+
+function isPlaceholderAuthor(value:string){
+  return !value||/(?:unknown|n\/a|未(?:知|提供)|无名|作者不详|我导入的测试读物|测试读物)/i.test(value);
+}
+
+/**
+ * Cover text is derived from the imported metadata at render time. The
+ * original DemoBook record stays untouched so existing local data and
+ * annotations remain compatible.
+ */
+function coverMetadata(book:Pick<DemoBook,"title"|"author">|null):CoverMetadata{
+  if(!book)return {title:"书架空了",author:"",translator:""};
+  let title=(book.title??"").normalize("NFKC")
+    .replace(/\.(?:txt|epub|pdf|mobi|azw3)$/i,"")
+    .replace(/\s+/g," ").trim();
+  // Strip bracketed download/source fragments, URLs and bare source domains.
+  title=title.replace(/\s*[（(【\[][^（）()【】\[\]]*?(?:z[\s-]*library|z[\s-]*lib|1lib|libgen|download|source|来源|下载|https?:\/\/|www\.|\.(?:com|net|org|sk|cc)\b)[^（）()【】\[\]]*[）)】\]]/giu,"");
+  title=title.replace(/(?:https?:\/\/|www\.)\S+/giu,"")
+    .replace(/\b(?:z[\s-]*library|z[\s-]*lib|1lib|libgen)\S*/giu,"")
+    .replace(/\s{2,}/g," ").trim();
+
+  let parsedAuthor="";
+  let parsedTranslator="";
+  // A trailing parenthetical is a reliable enough author cue for common
+  // library exports such as “Title (Author, Translator)”. Never treat a
+  // source-looking parenthetical as a person.
+  const parenthetical=title.match(/^(.*?)\s*[（(]([^（）()]+)[）)]\s*$/u);
+  if(parenthetical&&!SOURCE_METADATA_RE.test(parenthetical[2])){
+    title=parenthetical[1].trim();
+    const parts=parenthetical[2].split(/[，,；;|]/).map(item=>item.trim()).filter(Boolean);
+    const labelledTranslator=parts.find(item=>/(?:译者|翻译|translator)/iu.test(item));
+    const cleanLabel=(value:string)=>value.replace(/^(?:作者|author|译者|翻译|translator)\s*[:：]?\s*/iu,"").trim();
+    if(parts[0]&&!/(?:译者|翻译|translator)/iu.test(parts[0]))parsedAuthor=cleanLabel(parts[0]);
+    if(labelledTranslator)parsedTranslator=cleanLabel(labelledTranslator);
+  }
+  // Avoid displaying a placeholder injected by the local import demo.
+  const authorCandidate=!isPlaceholderAuthor(parsedAuthor)?parsedAuthor:
+    (!isPlaceholderAuthor(book.author??"")&&!SOURCE_METADATA_RE.test(book.author??"")?book.author.trim():"");
+  const safeTitle=title.replace(/^[《「『【]|[》」』】]$/gu,"").trim()||"未命名作品";
+  return {
+    title:safeTitle,
+    author:authorCandidate,
+    translator:!isPlaceholderAuthor(parsedTranslator)?parsedTranslator:"",
+  };
+}
+
+function coverTitleSize(title:string){
+  const length=Array.from(title).length;
+  if(length>=58)return 11;
+  if(length>=44)return 12;
+  if(length>=32)return 14;
+  if(length>=23)return 16;
+  if(length>=15)return 18;
+  return 20;
+}
+
 function rangeBoundary(container:HTMLElement,offset:number){
   const walker=document.createTreeWalker(container,NodeFilter.SHOW_TEXT);
   let node=walker.nextNode();
@@ -284,16 +407,20 @@ export function DemoLibrary() {
   const [markings,setMarkings] = useState<Marking[]>([]);
   const [drawing,setDrawing] = useState(false);
   const [drawingTool,setDrawingTool] = useState<"pen"|"eraser">("pen");
+  const [drawingColor,setDrawingColor] = useState<string>(DRAWING_COLORS[0]);
   const [activeStroke,setActiveStroke] = useState<Stroke|null>(null);
   const [resolvedInk,setResolvedInk] = useState<Record<string,{page:number;points:{x:number;y:number}[]}>>({});
   const resolvedInkSignatureRef=useRef("");
   const [undoHistory,setUndoHistory] = useState<StrokeChange[]>([]);
   const [redoHistory,setRedoHistory] = useState<StrokeChange[]>([]);
   const [selection,setSelection] = useState<Selection|null>(null);
+  const [focusAnchor,setFocusAnchor] = useState<FocusAnchor|null>(null);
+  const [focusedNoteIds,setFocusedNoteIds] = useState<string[]>([]);
   const [replyDrafts,setReplyDrafts] = useState<Record<string,string>>({});
   const [importing,setImporting] = useState(false);
   const [localReady,setLocalReady] = useState(false);
   const [bookId,setBookId] = useState("rain");
+  const [hasRecentBook,setHasRecentBook] = useState(false);
   const [chapterIndex,setChapterIndex] = useState(0);
   const [pageOffset,setPageOffset] = useState(0);
   const [pageCount,setPageCount] = useState(1);
@@ -322,13 +449,15 @@ export function DemoLibrary() {
   const [noteDraft,setNoteDraft] = useState("");
   const [openNoteId,setOpenNoteId] = useState<string|null>(null);
   const [notesVisible,setNotesVisible] = useState(false);
+  const [noteVisibility,setNoteVisibility] = useState<NoteVisibility>("public");
+  const [activeReaderId,setActiveReaderId] = useState<MemberId>("self");
+  const [memberColors,setMemberColors] = useState<Record<MemberId,string>>(DEFAULT_MEMBER_COLORS);
   const [tocVisible,setTocVisible] = useState(false);
   const [night,setNight] = useState(false);
   const [fontSize,setFontSize] = useState(19);
   const [doublePage,setDoublePage] = useState(true);
   const [saved,setSaved] = useState<string[]>([]);
   const [notice,setNotice] = useState("");
-  const noteSequence=useRef(0);
   const fileRef=useRef<HTMLInputElement|null>(null);
   const drawingRef=useRef<Stroke|null>(null);
   const erasedStrokesRef=useRef<Stroke[]>([]);
@@ -354,15 +483,22 @@ export function DemoLibrary() {
                 typeof n.id==="string"&&n.id.length<100&&typeof n.bookId==="string"&&
                 typeof n.quote==="string"&&n.quote.length<=160&&
                 typeof n.content==="string"&&n.content.length<=240&&
-                Number.isInteger(n.chapterIndex)&&n.chapterIndex>=0)
+                Number.isInteger(n.chapterIndex)&&n.chapterIndex>=0&&
+                (n.authorId===undefined||n.authorId==="self"||n.authorId==="companion")&&
+                (n.visibility===undefined||n.visibility==="public"||n.visibility==="private")&&
+                (n.ranges===undefined||validTextRanges(n.ranges)))
                 .slice(0,500).map(n=>({...n,
+                  authorId:memberIdForNote(n),
+                  visibility:(n.visibility==="private"?"private":"public") as NoteVisibility,
+                  ranges:validTextRanges(n.ranges)?n.ranges:undefined,
                   replies:Array.isArray(n.replies)?n.replies.filter(r=>r&&
                     typeof r.id==="string"&&typeof r.content==="string"&&
                     r.content.length<=240).slice(0,100):[],
                 }));
               const overrides=new Map(storedNotes.map(n=>[n.id,n]));
+              const initialIds=new Set(initialNotes.map(n=>n.id));
               setNotes([...initialNotes.map(n=>overrides.get(n.id)??n),
-                ...storedNotes.filter(n=>n.author==="我")]);
+                ...storedNotes.filter(n=>!initialIds.has(n.id))]);
             }
             if(parsed.pageProgress&&typeof parsed.pageProgress==="object"&&!Array.isArray(parsed.pageProgress)){
               const p=parsed.pageProgress as Record<string,unknown>;
@@ -388,25 +524,39 @@ export function DemoLibrary() {
               .filter(x=>x&&typeof x.bookId==="string"&&typeof x.id==="string"&&
                 typeof x.quote==="string"&&x.quote.length<=160&&x.quote.length>0&&
                 Number.isInteger(x.chapterIndex)&&x.chapterIndex>=0&&
+                (x.noteId===undefined||typeof x.noteId==="string")&&
+                (x.authorId===undefined||x.authorId==="self"||x.authorId==="companion")&&
                 (x.ranges===undefined||(Array.isArray(x.ranges)&&x.ranges.length<=40&&x.ranges.every(r=>
                   r&&Number.isInteger(r.paragraphIndex)&&r.paragraphIndex>=0&&
                   Number.isInteger(r.start)&&r.start>=0&&Number.isInteger(r.end)&&r.end>r.start))))
-              .slice(0,500));
+              .slice(0,500).map(mark=>({...mark,authorId:mark.authorId??"self"})));
             if(Array.isArray(parsed.strokes))setStrokes((parsed.strokes as Stroke[]).filter(
               x=>x&&typeof x.id==="string"&&typeof x.bookId==="string"&&
                 Number.isInteger(x.chapterIndex)&&Array.isArray(x.points)&&x.points.length<=1200&&
                 (x.page===undefined||(Number.isInteger(x.page)&&x.page>=0&&x.page<10000))&&
+                (x.authorId===undefined||x.authorId==="self"||x.authorId==="companion")&&
+                (x.color===undefined||typeof x.color==="string")&&
+                (x.width===undefined||typeof x.width==="number"&&x.width>0&&x.width<10)&&
                 x.points.every(p=>typeof p.x==="number"&&p.x>=0&&p.x<=1&&
                   typeof p.y==="number"&&p.y>=0&&p.y<=1)
-            ).slice(0,500));
+            ).slice(0,500).map(stroke=>({...stroke,authorId:stroke.authorId??"self",
+              visibility:stroke.visibility==="private"?"private":"public"})));
             if(parsed.settings&&typeof parsed.settings==="object"){
               const prefs=parsed.settings as Record<string,unknown>;
               if(typeof prefs.night==="boolean")setNight(prefs.night);
               if(Number.isInteger(prefs.fontSize)&&Number(prefs.fontSize)>=16&&Number(prefs.fontSize)<=24)
                 setFontSize(Number(prefs.fontSize));
-              if(typeof prefs.doublePage==="boolean")setDoublePage(prefs.doublePage);
+              // Desktop reading is now always a two-page spread. Keep the
+              // legacy preference readable, but migrate an old single-page
+              // value to true instead of reopening the reader in one page.
+              if(typeof prefs.doublePage==="boolean")setDoublePage(true);
+              if(prefs.memberColors)setMemberColors(normalizeMemberColors(prefs.memberColors));
+              if(prefs.activeReaderId==="self"||prefs.activeReaderId==="companion")setActiveReaderId(prefs.activeReaderId);
+              if(isDrawingColor(prefs.drawingColor))setDrawingColor(prefs.drawingColor);
             }
-            if(typeof parsed.recentBook==="string")setBookId(parsed.recentBook);
+            if(typeof parsed.recentBook==="string"){
+              setBookId(parsed.recentBook);setHasRecentBook(true);
+            }
           }
         }
       }catch{/* Invalid local demo storage resets to bundled public-domain-style samples. */}
@@ -421,9 +571,10 @@ export function DemoLibrary() {
         const snapshot={
           version:1,
           importedBooks:books.filter(b=>b.imported),
-          notes:notes.filter(n=>n.author==="我"||(n.replies?.length??0)>0),
-          saved,progress,pageProgress,readingAnchors,strokes:strokes.filter(Boolean),markings,settings:{night,fontSize,doublePage},
-          recentBook:bookId,
+          notes,
+          saved,progress,pageProgress,readingAnchors,strokes:strokes.filter(Boolean),markings,
+          settings:{night,fontSize,doublePage,memberColors,activeReaderId,drawingColor},
+          ...(hasRecentBook?{recentBook:bookId}:{}),
         };
         const serialized=JSON.stringify(snapshot);
         if(serialized.length>MAX_DEMO_STATE)
@@ -432,16 +583,37 @@ export function DemoLibrary() {
       }catch{setNotice("本地保存失败：可能已达到浏览器容量限制。请先导出备份。");}
     },320);
     return()=>window.clearTimeout(timeout);
-  },[localReady,books,notes,saved,progress,pageProgress,readingAnchors,strokes,markings,night,fontSize,doublePage,bookId]);
+  },[localReady,books,notes,saved,progress,pageProgress,readingAnchors,strokes,markings,night,fontSize,doublePage,bookId,hasRecentBook,memberColors,activeReaderId,drawingColor]);
 
-  const book=books.find(item=>item.id===bookId)??books[0];
+  const hasReadingState=(id:string)=>Object.prototype.hasOwnProperty.call(readingAnchors,id)||
+    Object.prototype.hasOwnProperty.call(progress,id)||
+    Object.keys(pageProgress).some(key=>key.startsWith(id+":"));
+  const recentOpenedBook=hasRecentBook?books.find(item=>item.id===bookId)??null:null;
+  const recentReadingBook=recentOpenedBook&&hasReadingState(recentOpenedBook.id)?recentOpenedBook:null;
+  const recentAddedBook=books.filter(item=>item.imported&&Number.isFinite(item.addedAt))
+    .sort((a,b)=>(b.addedAt??0)-(a.addedAt??0))[0]??null;
+  const heroBook=recentReadingBook??recentOpenedBook??recentAddedBook??(books.length?books[0]:null);
+  const heroCover=coverMetadata(heroBook);
+  const heroCoverTitleSize=coverTitleSize(heroCover.title);
+  const book=books.find(item=>item.id===bookId)??books[0]??seedBooks[0];
+  const heroProgress=heroBook?Math.round(clampUnit(
+    typeof readingAnchors[heroBook.id]==="number"
+      ?readingAnchors[heroBook.id]
+      :(heroBook.chapters.length>1?(progress[heroBook.id]??0)/(heroBook.chapters.length-1):0)
+  )*100):0;
   const safeChapterIndex=Math.max(0,Math.min(chapterIndex,book.chapters.length-1));
   const chapter=book.chapters[safeChapterIndex];
   const saveKey=book.id+":"+safeChapterIndex+":"+pageOffset;
   const bookmarked=saved.includes(saveKey);
-  const currentNotes=notes.filter(item=>item.bookId===book.id && item.chapterIndex===safeChapterIndex);
+  const visibleNotes=notes.filter(item=>noteIsVisible(item,activeReaderId));
+  const currentNotes=visibleNotes.filter(item=>item.bookId===book.id && item.chapterIndex===safeChapterIndex);
   const tocEntries=book.toc??(book.imported?[]:book.chapters.map((item,index)=>({title:item.name,chapterIndex:index})));
-  const allBookNotes=notes.filter(item=>item.bookId===book.id);
+  const allBookNotes=visibleNotes.filter(item=>item.bookId===book.id);
+  useEffect(()=>{
+    if(!focusAnchor)return;
+    const timeout=window.setTimeout(()=>setFocusAnchor(null),1800);
+    return()=>window.clearTimeout(timeout);
+  },[focusAnchor]);
   const results=books.filter(item=>
     (kind==="全部"||(kind==="我的导入"?item.imported===true:item.kind===kind)) &&
     (item.title+item.subtitle+item.author).toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())
@@ -467,7 +639,10 @@ export function DemoLibrary() {
   // Keeping the state breakpoint in lock-step with CSS is important: rendering
   // two logical pages while CSS hides one was previously another way to lose a
   // page from the reader's visible sequence.
-  const visiblePages=doublePage&&viewportWidth>=1000?2:1;
+  // The desktop reader is intentionally fixed to a continuous two-page
+  // spread. Below the desktop breakpoint the existing single-page behavior
+  // remains unchanged for phones and tablets.
+  const visiblePages=viewportWidth>=1000?2:1;
   pageOffsetRef.current=pageOffset;
   pageCountRef.current=pageCount;
   visiblePagesRef.current=visiblePages;
@@ -735,6 +910,18 @@ export function DemoLibrary() {
     window.addEventListener("keydown",onKey);
     return()=>window.removeEventListener("keydown",onKey);
   });
+  useEffect(()=>{
+    if(screen!=="reader"||drawing)return;
+    const onSelectionChange=()=>{
+      const selected=window.getSelection();
+      const node=selected?.anchorNode;
+      const element=node?.nodeType===Node.ELEMENT_NODE?node as Element:node?.parentElement;
+      const prose=element?.closest<HTMLElement>(".demo-prose");
+      if(prose)captureSelection(safeChapterIndex,prose);
+    };
+    document.addEventListener("selectionchange",onSelectionChange);
+    return()=>document.removeEventListener("selectionchange",onSelectionChange);
+  },[screen,drawing,safeChapterIndex,book.id]);
 
   const allBookmarks=saved.flatMap(key=>{
     const [id,chapterPart,pagePart="0"]=key.split(":");
@@ -752,7 +939,7 @@ export function DemoLibrary() {
   function openBook(id:string){
     const nextChapter=Math.min(progress[id]??0,(books.find(x=>x.id===id)?.chapters.length??1)-1);
     const nextPage=pageProgress[id+":"+nextChapter]??0;
-    setBookId(id);setChapterIndex(nextChapter);
+    setBookId(id);setHasRecentBook(true);setChapterIndex(nextChapter);
     pageOffsetRef.current=nextPage;
     setPaginationReady(false);
     setPageOffset(nextPage);setScreen("reader");
@@ -817,8 +1004,8 @@ export function DemoLibrary() {
         kind:"我的导入",edition:"LOCAL ONLY",color:"moss",initials:"本",
         chapters,
         toc,
-        imported:true}]);
-      setBookId(id);setChapterIndex(0);setPageOffset(0);setScreen("reader");setKind("全部");
+        imported:true,addedAt:Date.now()}]);
+      setBookId(id);setHasRecentBook(true);setChapterIndex(0);setPageOffset(0);setScreen("reader");setKind("全部");
       setNotice("已导入本地阅读。受浏览器容量限制，请及时备份，切勿依赖它保存唯一原稿。");
     }catch(error){
       setNotice(error instanceof Error?error.message:"无法安全解析此文件。");
@@ -833,7 +1020,7 @@ export function DemoLibrary() {
     setMarkings(old=>old.filter(m=>m.bookId!==id));
     setStrokes(old=>old.filter(d=>d.bookId!==id));
     setProgress(old=>{const next={...old};delete next[id];return next;});
-    if(bookId===id){setBookId("rain");setChapterIndex(0);setPageOffset(0);}
+    if(bookId===id){setBookId("rain");setHasRecentBook(false);setChapterIndex(0);setPageOffset(0);}
     setNotice("本地导入书籍已移除。");
   }
   function saveExport(){
@@ -846,13 +1033,15 @@ export function DemoLibrary() {
     setNotice("已请求下载本地演示备份。它是明文 JSON，请妥善保存。");
   }
   function captureSelection(index:number,container:HTMLElement){
-    if(drawing)return;
+    if(drawing){container.dataset.selectionState="drawing";return;}
     const selected=window.getSelection();
     if(!selected||selected.isCollapsed||!selected.anchorNode||!selected.focusNode||
-      !container.contains(selected.anchorNode)||!container.contains(selected.focusNode))return;
+      !container.contains(selected.anchorNode)||!container.contains(selected.focusNode)){
+      container.dataset.selectionState="outside";return;
+    }
     const range=selected.getRangeAt(0);
     const quote=selected.toString().trim();
-    if(quote.length<2||quote.length>160)return;
+    if(quote.length<2||quote.length>160){container.dataset.selectionState="length";return;}
     const paragraphs=Array.from(container.querySelectorAll<HTMLElement>("p[data-paragraph-index]"));
     const paragraphFor=(node:Node)=>{
       const element=node.nodeType===Node.ELEMENT_NODE?node as Element:node.parentElement;
@@ -861,15 +1050,23 @@ export function DemoLibrary() {
     const startParagraph=paragraphFor(range.startContainer),endParagraph=paragraphFor(range.endContainer);
     const first=startParagraph?paragraphs.indexOf(startParagraph):-1;
     const last=endParagraph?paragraphs.indexOf(endParagraph):-1;
-    if(first<0||last<first)return;
-    const ranges=paragraphs.slice(first,last+1).flatMap((paragraph,relativeIndex)=>{
+    let ranges:TextRange[]=first<0||last<first?[]:paragraphs.slice(first,last+1).flatMap((paragraph,relativeIndex)=>{
       const isFirst=relativeIndex===0,isLast=relativeIndex===last-first;
       const start=isFirst?textOffsetIn(paragraph,range.startContainer,range.startOffset):0;
       const end=isLast?textOffsetIn(paragraph,range.endContainer,range.endOffset):(paragraph.textContent?.length??0);
       const paragraphIndex=Number(paragraph.dataset.paragraphIndex);
       return Number.isInteger(paragraphIndex)&&start>=0&&end>start?[{paragraphIndex,start,end}]:[];
     });
-    if(!ranges.length)return;
+    // Browser selection endpoints can be normalized to a column wrapper after
+    // a reflow. Fall back to the selected source text, never to a pixel box.
+    if(!ranges.length){
+      const fallback=paragraphs.find(paragraph=>(paragraph.textContent??"").includes(quote));
+      const start=fallback?.textContent?.indexOf(quote)??-1;
+      const paragraphIndex=Number(fallback?.dataset.paragraphIndex);
+      if(fallback&&start>=0&&Number.isInteger(paragraphIndex))ranges=[{paragraphIndex,start,end:start+quote.length}];
+    }
+    if(!ranges.length){container.dataset.selectionState="unanchored";return;}
+    container.dataset.selectionState="saved";
     setSelection({quote,chapterIndex:index,ranges});
   }
   function markSelection(){
@@ -877,7 +1074,7 @@ export function DemoLibrary() {
     if(!markings.some(m=>m.bookId===book.id&&m.chapterIndex===chapterIndex&&
       JSON.stringify(m.ranges)===JSON.stringify(selection.ranges))){
       setMarkings(old=>[...old,{id:crypto.randomUUID(),bookId:book.id,
-        chapterIndex,quote:selection.quote,ranges:selection.ranges}]);
+        chapterIndex,quote:selection.quote,ranges:selection.ranges,authorId:activeReaderId}]);
     }
     setNotice("这段文字已划线，保存在当前浏览器。");
     window.getSelection()?.removeAllRanges();
@@ -891,6 +1088,15 @@ export function DemoLibrary() {
     const prose=document.querySelector<HTMLElement>(".demo-prose");
     const svgRect=layer.getBoundingClientRect();
     if(!prose||svgRect.width<1||svgRect.height<1||!stroke.points.length)return undefined;
+    const viewportRect=flowViewportRef.current?.getBoundingClientRect();
+    const step=flowLayout.pageStep;
+    const expectedPage=Number(layer.dataset.page??stroke.page??0);
+    const rectBelongsToDrawnPage=(rect:DOMRect)=>{
+      if(!viewportRect||step<1||!Number.isInteger(expectedPage))return true;
+      const center=(rect.left+rect.right)/2;
+      const column=Math.floor((center-viewportRect.left+pageOffset*step)/step);
+      return column===expectedPage;
+    };
     const strokeBounds={
       left:svgRect.left+Math.min(...stroke.points.map(point=>point.x))*svgRect.width,
       top:svgRect.top+Math.min(...stroke.points.map(point=>point.y))*svgRect.height,
@@ -910,7 +1116,7 @@ export function DemoLibrary() {
       for(let index=0;index<text.length;index++){
         const range=textRangeAtOffsets(paragraph,index,index+1);
         const rect=Array.from(range?.getClientRects()??[]).find(item=>item.width>0&&item.height>0&&
-          rectsOverlap(item,strokeBounds));
+          rectsOverlap(item,strokeBounds)&&rectBelongsToDrawnPage(item));
         if(rect){
           if(runStart<0)runStart=index;
           runRects.push(rect);
@@ -955,7 +1161,12 @@ export function DemoLibrary() {
     const layerRect=layer.getBoundingClientRect();
     const rects=Array.from(range?.getClientRects()??[]).filter(rect=>rect.width>0&&rect.height>0);
     const pageRects=rects.filter(rect=>{
-      const column=Math.floor((rect.left-viewportRect.left+pageOffset*step)/step);
+      // A line can straddle the boundary between two physical sheets. Using
+      // its left edge assigns that line to the previous page and can move a
+      // right-page stroke onto the left sheet after a refresh. The glyph run's
+      // center is stable for the page that contains most of the selected text.
+      const center=(rect.left+rect.right)/2;
+      const column=Math.floor((center-viewportRect.left+pageOffset*step)/step);
       return column===page&&rectsOverlap(rect,layerRect);
     });
     const bounds=rectUnion(pageRects);
@@ -1022,7 +1233,8 @@ export function DemoLibrary() {
       return;
     }
     const stroke:Stroke={id:crypto.randomUUID(),bookId:book.id,chapterIndex:index,page,
-      points:[position(event)]};
+      points:[position(event)],authorId:activeReaderId,color:drawingColor,width:.65,
+      visibility:"public",createdAt:Date.now(),updatedAt:Date.now()};
     drawingRef.current=stroke;setActiveStroke(stroke);
   }
   function moveStroke(event:PointerEvent<SVGSVGElement>){
@@ -1086,6 +1298,71 @@ export function DemoLibrary() {
       return old.filter(stroke=>!ids.has(stroke.id));
     });
   }
+  function rangesForNote(note:DemoNote):TextRange[]|null{
+    const targetBook=books.find(item=>item.id===note.bookId);
+    const targetChapter=targetBook?.chapters[note.chapterIndex];
+    if(!targetChapter)return null;
+    if(validTextRanges(note.ranges)&&note.ranges.every(range=>{
+      const paragraph=targetChapter.paragraphs[range.paragraphIndex];
+      return !!paragraph&&range.end<=paragraph.length;
+    }))return note.ranges;
+    return uniqueQuoteRanges(targetChapter,note.quote);
+  }
+  function rangesForMark(mark:Marking):TextRange[]|null{
+    if(validTextRanges(mark.ranges))return mark.ranges;
+    const linked=mark.noteId?notes.find(note=>note.id===mark.noteId):undefined;
+    if(linked){
+      const linkedRanges=rangesForNote(linked);
+      if(linkedRanges)return linkedRanges;
+    }
+    const targetBook=books.find(item=>item.id===mark.bookId);
+    const targetChapter=targetBook?.chapters[mark.chapterIndex];
+    return targetChapter?uniqueQuoteRanges(targetChapter,mark.quote):null;
+  }
+  function openMarkings(selected:Marking[]){
+    const ids=new Set(selected.flatMap(mark=>mark.noteId?[mark.noteId]:[]));
+    const quotes=new Set(selected.map(mark=>mark.quote));
+    const related=visibleNotes.filter(note=>ids.has(note.id)||quotes.has(note.quote));
+    setFocusedNoteIds(related.map(note=>note.id));
+    setOpenNoteId(related[0]?.id??null);
+    setTocVisible(false);setNotesVisible(true);
+    setNotice(related.length>1?"这段文字有多条批注，已在右侧展开。":"已打开这段文字对应的批注。");
+  }
+  function openNoteQuote(note:DemoNote){
+    const ranges=rangesForNote(note);
+    if(!ranges){
+      setOpenNoteId(note.id);setFocusedNoteIds([note.id]);setNotesVisible(true);
+      setNotice("这条旧批注的原文位置待确认，已保留批注内容。");
+      return;
+    }
+    const targetBook=books.find(item=>item.id===note.bookId);
+    const targetChapter=targetBook?.chapters[note.chapterIndex];
+    if(!targetBook||!targetChapter)return;
+    const first=ranges[0];
+    const before=targetChapter.paragraphs.slice(0,first.paragraphIndex)
+      .reduce((total,paragraph)=>total+paragraph.length+2,0);
+    const ratio=clampUnit((before+first.start)/chapterSourceLength(targetChapter));
+    const sameMeasuredChapter=targetBook.id===book.id&&note.chapterIndex===safeChapterIndex&&
+      pageCountRef.current>1&&paginationReady;
+    if(sameMeasuredChapter){
+      const raw=Math.round(ratio*Math.max(0,pageCountRef.current-1));
+      const next=Math.min(Math.floor(raw/visiblePagesRef.current)*visiblePagesRef.current,
+        Math.floor((pageCountRef.current-1)/visiblePagesRef.current)*visiblePagesRef.current);
+      pendingBookAnchorRef.current=null;pendingReflowAnchorRef.current=null;
+      pageOffsetRef.current=next;setPageOffset(next);
+      setPageProgress(old=>({...old,[targetBook.id+":"+note.chapterIndex]:next}));
+    }else{
+      pendingBookAnchorRef.current={chapterIndex:note.chapterIndex,ratio};
+      pendingReflowAnchorRef.current=null;
+      pageOffsetRef.current=0;pageCountRef.current=1;
+      setPaginationReady(false);setPageOffset(0);setPageCount(1);
+    }
+    setBookId(note.bookId);setHasRecentBook(true);setChapterIndex(note.chapterIndex);
+    setProgress(old=>({...old,[note.bookId]:note.chapterIndex}));
+    setPageProgress(old=>({...old,[note.bookId+":"+note.chapterIndex]:0}));
+    setOpenNoteId(note.id);setFocusedNoteIds([note.id]);setTocVisible(false);setNotesVisible(true);
+    setFocusAnchor({bookId:note.bookId,chapterIndex:note.chapterIndex,ranges,token:Date.now()});
+  }
   function sendReply(id:string){
     const content=replyDrafts[id]?.trim();
     if(!content||content.length>240)return;
@@ -1098,24 +1375,45 @@ export function DemoLibrary() {
     event.preventDefault();
     const body=noteDraft.trim();
     if(body.length<2)return;
+    const noteId=(activeReaderId==="self"?"me-":"companion-")+crypto.randomUUID();
+    const noteRanges=selection?.chapterIndex===chapterIndex?selection.ranges:undefined;
     const note:DemoNote={
-      id:"me-"+(++noteSequence.current),
+      id:noteId,
       bookId:book.id,
       chapterIndex,
       quote:selection?.chapterIndex===chapterIndex?selection.quote:(chapter.marked||chapter.paragraphs[0]?.slice(0,60)||""),
       content:body.slice(0,240),
-      author:"我",
+      author:activeReaderId==="self"?"我":"共读伙伴",
+      authorId:activeReaderId,visibility:noteVisibility,ranges:noteRanges,
+      createdAt:Date.now(),updatedAt:Date.now(),
     };
     setNotes(current=>[...current,note]);
-    setOpenNoteId(note.id);setNotesVisible(true);setNoteDraft("");setSelection(null);
+    if(noteRanges){
+      setMarkings(old=>{
+        const reusable=old.find(mark=>mark.bookId===book.id&&mark.chapterIndex===chapterIndex&&
+          !mark.noteId&&JSON.stringify(mark.ranges)===JSON.stringify(noteRanges));
+        if(reusable)return old.map(mark=>mark.id===reusable.id?{...mark,noteId:note.id,authorId:activeReaderId}:mark);
+        return [...old,{id:crypto.randomUUID(),bookId:book.id,chapterIndex,quote:note.quote,
+          ranges:noteRanges,noteId:note.id,authorId:activeReaderId}];
+      });
+    }
+    setOpenNoteId(note.id);setFocusedNoteIds([note.id]);setNotesVisible(true);setNoteDraft("");setSelection(null);
     setNotice("批注已保存到本地浏览器；刷新页面后仍可查看。");
   }
   function removeNote(id:string){
     const item=notes.find(x=>x.id===id);
-    if(item?.author!=="我")return;
+    if(!item||memberIdForNote(item)!==activeReaderId)return;
     setNotes(current=>current.filter(x=>x.id!==id));
+    setMarkings(current=>current.filter(mark=>mark.noteId!==id));
     if(openNoteId===id)setOpenNoteId(null);
     setNotice("已从演示界面移除这条批注。");
+  }
+  function toggleNoteVisibility(id:string){
+    const item=notes.find(x=>x.id===id);
+    if(!item||memberIdForNote(item)!==activeReaderId)return;
+    const nextVisibility:NoteVisibility=item.visibility==="private"?"public":"private";
+    setNotes(current=>current.map(note=>note.id===id?{...note,visibility:nextVisibility,updatedAt:Date.now()}:note));
+    setNotice(nextVisibility==="private"?"这条批注已改为仅自己可见。":"这条批注已改为双方可见。");
   }
   function renderPaper(shownPage:number,secondary=false,blank=false){
     return <article className={"demo-paper-page demo-physical-page"+
@@ -1151,7 +1449,7 @@ export function DemoLibrary() {
           (resolvedInk[t.id]?.page??t.page??0)===shownPage),
         ...(activeStroke?.bookId===book.id&&activeStroke.chapterIndex===safeChapterIndex&&
           (activeStroke.page??0)===shownPage?[activeStroke]:[])].map(t=>
-        <polyline key={t.id} data-stroke-id={t.id} fill="none" stroke="#ac6550" strokeWidth=".65"
+        <polyline key={t.id} data-stroke-id={t.id} fill="none" stroke={t.color??LEGACY_DRAWING_COLOR} strokeWidth={t.width??.65}
           strokeLinecap="round" strokeLinejoin="round"
           points={(resolvedInk[t.id]?.points??t.points).map(p=>(p.x*100)+","+(p.y*100)).join(" ")}/>
       )}
@@ -1159,36 +1457,55 @@ export function DemoLibrary() {
   }
 
   function renderChapterFlow(){
-    const linkedNote=notes.find(x=>x.bookId===book.id&&
-      x.chapterIndex===safeChapterIndex&&x.author==="共读伙伴");
     const columnGap=Math.max(0,flowLayout.pageStep-flowLayout.contentWidth);
-    const chapterMarkings=markings.filter(item=>item.bookId===book.id&&item.chapterIndex===safeChapterIndex);
-    function openMarking(mark:Marking){
-      const matched=notes.find(note=>note.bookId===book.id&&note.chapterIndex===safeChapterIndex&&note.quote===mark.quote);
-      setOpenNoteId(matched?.id??linkedNote?.id??null);setTocVisible(false);setNotesVisible(true);
-      setNotice("划线会始终显示；点击可查看或补充这段文字的批注。");
-    }
+    const explicitMarks=markings.filter(item=>item.bookId===book.id&&item.chapterIndex===safeChapterIndex);
+    const chapterMarkings=explicitMarks.flatMap(mark=>{
+      const linked=mark.noteId?notes.find(note=>note.id===mark.noteId):undefined;
+      if(linked&&!noteIsVisible(linked,activeReaderId))return [];
+      const ranges=rangesForMark(mark);
+      if(!ranges)return [];
+      return [{...mark,ranges,authorId:mark.authorId??(linked?memberIdForNote(linked):"self")}];
+    });
+    const derivedNoteMarks=currentNotes.flatMap(note=>{
+      if(explicitMarks.some(mark=>mark.noteId===note.id)||explicitMarks.some(mark=>
+        !mark.noteId&&mark.quote===note.quote&&(mark.authorId??"self")===memberIdForNote(note)))return [];
+      const ranges=rangesForNote(note);
+      if(!ranges)return [];
+      return [{id:"note:"+note.id,bookId:note.bookId,chapterIndex:note.chapterIndex,
+        quote:note.quote,ranges,noteId:note.id,authorId:memberIdForNote(note)}];
+    });
+    const allChapterMarks=[...chapterMarkings,...derivedNoteMarks];
+    const focusRanges=focusAnchor?.bookId===book.id&&focusAnchor.chapterIndex===safeChapterIndex
+      ?focusAnchor.ranges:[];
+    const rangesOverlap=(left:TextRange,right:TextRange)=>left.paragraphIndex===right.paragraphIndex&&
+      left.start<right.end&&right.start<left.end;
     function markedParagraph(paragraph:string,paragraphIndex:number){
-      const ranges=chapterMarkings.flatMap(mark=>{
-        const anchored=(mark.ranges??[]).filter(range=>range.paragraphIndex===paragraphIndex)
-          .map(range=>({...range,mark}));
-        if(anchored.length)return anchored;
-        // v1 data used only an excerpt. Preserve it without moving any old note.
-        const start=mark.ranges? -1:paragraph.indexOf(mark.quote);
-        return start<0?[]:[{paragraphIndex,start,end:start+mark.quote.length,mark}];
-      });
+      const ranges=allChapterMarks.flatMap(mark=>mark.ranges
+        .filter(range=>range.paragraphIndex===paragraphIndex)
+        .map(range=>({...range,mark})));
       if(!ranges.length)return paragraph;
       const stops=[0,paragraph.length,...ranges.flatMap(range=>[range.start,range.end])]
         .filter(value=>value>=0&&value<=paragraph.length).sort((a,b)=>a-b)
         .filter((value,index,all)=>index===0||value!==all[index-1]);
       return stops.slice(0,-1).map((start,index)=>{
         const end=stops[index+1],content=paragraph.slice(start,end);
-        const range=ranges.find(item=>item.start<=start&&item.end>=end);
-        return range?<mark key={start+":"+end+":"+range.mark.id} className="demo-quoted-mark"
-          role="button" tabIndex={0} aria-label={"查看这段划线与批注："+content}
-          onClick={()=>openMarking(range.mark)} onKeyDown={event=>{
-            if(event.key==="Enter"||event.key===" "){event.preventDefault();openMarking(range.mark);}
-          }}>{content}</mark>:<span key={start+":"+end}>{content}</span>;
+        const covering=ranges.filter(item=>item.start<=start&&item.end>=end)
+          .map(item=>item.mark).filter((mark,index,all)=>all.findIndex(item=>item.id===mark.id)===index);
+        if(!covering.length)return <span key={start+":"+end}>{content}</span>;
+        const colors=[...new Set(covering.map(mark=>memberColors[mark.authorId??"self"]))];
+        const focused=focusRanges.some(target=>covering.some(mark=>mark.ranges.some(range=>rangesOverlap(range,target))));
+        const style={
+          "--demo-mark-color":colors[0]??DEFAULT_MEMBER_COLORS.self,
+          "--demo-mark-color-secondary":colors[1]??colors[0]??DEFAULT_MEMBER_COLORS.self,
+        } as CSSProperties;
+        return <span key={start+":"+end+":"+covering.map(mark=>mark.id).join(",")}
+          className={"demo-quoted-mark"+(colors.length>1?" demo-quoted-mark-multi":"")+(focused?" demo-annotation-focus":"")}
+          style={style} role="button" tabIndex={0} data-mark-count={covering.length}
+          data-note-ids={covering.flatMap(mark=>mark.noteId?[mark.noteId]:[]).join(",")}
+          aria-label={"查看这段文字的 "+covering.length+" 条批注："+content}
+          onClick={()=>openMarkings(covering)} onKeyDown={event=>{
+            if(event.key==="Enter"||event.key===" "){event.preventDefault();openMarkings(covering);}
+          }}>{content}</span>;
       });
     }
     return <div className="demo-flow-viewport" ref={flowViewportRef}>
@@ -1207,6 +1524,7 @@ export function DemoLibrary() {
           <h2 className="demo-chapter-name">{chapter.name}</h2></>}
         <div className="demo-prose" style={{fontSize:fontSize+"px"}}
           onMouseUp={e=>captureSelection(safeChapterIndex,e.currentTarget)}
+          onSelect={e=>captureSelection(safeChapterIndex,e.currentTarget)}
           onTouchEnd={e=>captureSelection(safeChapterIndex,e.currentTarget)}>
           {chapter.paragraphs.map((paragraph,i)=><p key={i} data-paragraph-index={i}>
             {markedParagraph(paragraph,i)}</p>)}
@@ -1215,17 +1533,31 @@ export function DemoLibrary() {
     </div>;
   }
   function renderNote(item:DemoNote){
-    return <article key={item.id} className={"demo-note-card"+(openNoteId===item.id?" demo-note-selected":"")}>
+    const authorId=memberIdForNote(item);
+    const accent=memberColors[authorId];
+    const focused=focusedNoteIds.includes(item.id)||openNoteId===item.id;
+    return <article key={item.id} className={"demo-note-card"+(focused?" demo-note-selected":"")}
+      style={{"--demo-note-accent":accent} as CSSProperties}>
       <div className="demo-note-author">
-        <span className={"demo-mini-avatar"+(item.author==="我"?" demo-self-avatar":"")}>
-          {item.author==="我"?"我":"伴"}
+        <span className="demo-mini-avatar" style={{backgroundColor:accent}}>
+          {authorId==="self"?"我":"伴"}
         </span>
         <strong>{item.author}</strong>
-        <span>{item.author==="我"?"刚刚":"演示批注"}</span>
-        {item.author==="我"&&<button type="button" className="demo-note-remove"
-          onClick={()=>removeNote(item.id)} aria-label="删除我添加的这条演示批注">删除</button>}
+        <span>{item.visibility==="private"?"仅自己可见":item.authorId?"双方可见":"演示批注"}</span>
+        {authorId===activeReaderId&&<span className="demo-note-actions">
+          <button type="button" className="demo-note-visibility-toggle"
+            onClick={()=>toggleNoteVisibility(item.id)}
+            aria-label={item.visibility==="private"?"将这条批注改为双方可见":"将这条批注改为仅自己可见"}>
+            {item.visibility==="private"?"公开":"设为私密"}
+          </button>
+          <button type="button" className="demo-note-remove"
+            onClick={()=>removeNote(item.id)} aria-label="删除我添加的这条演示批注">删除</button>
+        </span>}
       </div>
-      <blockquote>“{item.quote}”</blockquote>
+      <blockquote role="button" tabIndex={0} aria-label="定位到这条批注的原文"
+        onClick={()=>openNoteQuote(item)} onKeyDown={event=>{
+          if(event.key==="Enter"||event.key===" "){event.preventDefault();openNoteQuote(item);}
+        }}>“{item.quote}”</blockquote>
       <p>{item.content}</p>
       {(item.replies??[]).map(reply=><p key={reply.id} className="demo-local-reply">
         ↳ 我的回复：{reply.content}
@@ -1292,12 +1624,23 @@ export function DemoLibrary() {
                 <div className="demo-eyebrow"><span className="demo-gold-line"/> OUR LITTLE LIBRARY</div>
                 <h1>让阅读，<br/><em>成为两个人的事。</em></h1>
                 <p>不需要追赶同一个页码。你读你的故事，我在字里行间等你。</p>
-                <button type="button" className="demo-hero-button" onClick={()=>openBook("rain")}>继续阅读 <span>↗</span></button>
+                {heroBook&&<small className="demo-hero-reading-state">
+                  {heroCover.title} · 已读约 {heroProgress}%
+                </small>}
+                <button type="button" className="demo-hero-button"
+                  onClick={()=>heroBook?openBook(heroBook.id):fileRef.current?.click()}>
+                  {heroBook?"继续阅读":"导入第一本书"} <span>↗</span>
+                </button>
               </div>
               <div className="demo-hero-art" aria-hidden="true">
                 <div className="demo-art-halo"/>
-                <div className="demo-art-book demo-art-back">S.<small>THE ART OF READING</small></div>
-                <div className="demo-art-book demo-art-front"><span>雨<br/>停<br/>之<br/>前</span><i>01 —— 04</i></div>
+                <div className="demo-art-book demo-art-back"><span className="demo-art-back-mark">✦</span><small>SHARED READING</small></div>
+                <div className="demo-art-book demo-art-front">
+                  <span className="demo-art-cover-title" style={{fontSize:`${heroCoverTitleSize}px`}}>{heroCover.title}</span>
+                  {heroCover.author&&<small className="demo-art-cover-author">{heroCover.author}</small>}
+                  {heroCover.translator&&<small className="demo-art-cover-translator">译 · {heroCover.translator}</small>}
+                  <i>{heroBook?.edition??"ADD A BOOK"}</i>
+                </div>
                 <div className="demo-art-cup"/>
                 <div className="demo-art-shadow"/>
               </div>
@@ -1392,6 +1735,11 @@ export function DemoLibrary() {
               <button type="button" onClick={()=>setSelection(null)}>取消</button></div>}
             {drawing&&<div className="demo-drawing-help">
               <span>手绘：笔迹按当前书页保存。</span>
+              <div className="demo-drawing-colors" aria-label="自由手绘颜色">
+                {DRAWING_COLORS.map(color=><button key={color} type="button" className={drawingColor===color?"demo-drawing-color-selected":""}
+                  aria-label={"选择手绘颜色 "+color} aria-pressed={drawingColor===color}
+                  style={{backgroundColor:color}} onClick={()=>setDrawingColor(color)}/>) }
+              </div>
               <button type="button" className={drawingTool==="pen"?"demo-tool-selected":""} onClick={()=>setDrawingTool("pen")}>画笔</button>
               <button type="button" className={drawingTool==="eraser"?"demo-tool-selected":""} onClick={()=>setDrawingTool("eraser")}>橡皮擦</button>
               <button type="button" disabled={!undoHistory.length} onClick={undoStroke}>撤销</button>
@@ -1406,7 +1754,11 @@ export function DemoLibrary() {
                   {visiblePages===2&&renderPaper(pageOffset+1,true,pageOffset+1>=pageCount)}
                   {renderChapterFlow()}
                   {renderInkLayer(pageOffset,0)}
-                  {visiblePages===2&&pageOffset+1<pageCount&&renderInkLayer(pageOffset+1,1)}
+                  {/* Keep an interactive layer over the right sheet even when
+                   * it is the final blank page of a chapter. The paper is
+                   * still a valid drawing surface and old strokes must not
+                   * disappear merely because the page has no prose column. */}
+                  {visiblePages===2&&renderInkLayer(pageOffset+1,1)}
                 </div>
                 <div className="demo-page-navigation" data-page-count={pageCount} data-page-offset={pageOffset}
                   data-chapter={safeChapterIndex}>
@@ -1450,6 +1802,13 @@ export function DemoLibrary() {
                 </div>
                 <form onSubmit={saveNote} className="demo-note-compose">
                   <label htmlFor="demo-new-note">写下此刻的想法</label>
+                  <div className="demo-note-visibility" aria-label="批注可见范围">
+                    <span>可见范围</span>
+                    <button type="button" className={noteVisibility==="public"?"demo-choice-current":""}
+                      aria-pressed={noteVisibility==="public"} onClick={()=>setNoteVisibility("public")}>双方可见</button>
+                    <button type="button" className={noteVisibility==="private"?"demo-choice-current":""}
+                      aria-pressed={noteVisibility==="private"} onClick={()=>setNoteVisibility("private")}>仅自己可见</button>
+                  </div>
                   <textarea id="demo-new-note" maxLength={240} value={noteDraft}
                     onChange={event=>setNoteDraft(event.target.value)}
                     placeholder="这段文字让我想到……"/>
@@ -1476,8 +1835,7 @@ export function DemoLibrary() {
             {allBookNotes.map(item=><div className="demo-notes-list-item" key={item.id}>
               {renderNote(item)}
               <button type="button" onClick={()=>{
-                setChapterIndex(item.chapterIndex);setPageOffset(0);setScreen("reader");
-                setOpenNoteId(item.id);setNotesVisible(true);
+                setScreen("reader");openNoteQuote(item);
               }}>前往第 {item.chapterIndex+1} 章 →</button>
             </div>)}
             {allBookNotes.length===0&&<p>还没有批注，先去读一章吧。</p>}
@@ -1516,10 +1874,30 @@ export function DemoLibrary() {
                 <strong>{fontSize}px</strong>
               </label>
             </div>
-            <div className="demo-settings-row"><div><h2>桌面双页</h2><p>宽屏像纸质书一样显示连续两页。点击左右翻页，不需要纵向滚动。</p></div>
-              <button type="button" className={"demo-toggle"+(doublePage?" demo-toggle-on":"")}
-                role="switch" aria-checked={doublePage} aria-label="桌面双页模式"
-                onClick={()=>{preserveReflowAnchor();setDoublePage(x=>!x);}}><span/></button>
+            <div className="demo-settings-row demo-annotation-color-row"><div><h2>文字批注身份颜色</h2>
+              <p>颜色只用于识别文字批注作者；自由手绘颜色在阅读器工具栏中独立设置。</p></div>
+              <div className="demo-identity-color-settings">
+                <div className="demo-reader-identity-switch" aria-label="选择当前模拟读者">
+                  <span>当前身份</span>
+                  <button type="button" className={activeReaderId==="self"?"demo-choice-current":""}
+                    aria-pressed={activeReaderId==="self"} onClick={()=>setActiveReaderId("self")}>我</button>
+                  <button type="button" className={activeReaderId==="companion"?"demo-choice-current":""}
+                    aria-pressed={activeReaderId==="companion"} onClick={()=>setActiveReaderId("companion")}>共读伙伴</button>
+                </div>
+                <div className="demo-annotation-color-grid" aria-label="预设批注颜色">
+                  {ANNOTATION_COLORS.map(color=>{
+                    const occupiedBy=activeReaderId==="self"?memberColors.companion:memberColors.self;
+                    const selected=memberColors[activeReaderId]===color.value;
+                    const disabled=occupiedBy===color.value;
+                    return <button key={color.value} type="button" className={selected?"demo-annotation-color-selected":""}
+                      disabled={disabled} aria-pressed={selected} aria-label={color.name+(disabled?"，共读伙伴已选择":"")}
+                      title={disabled?"共读伙伴已选择":color.name}
+                      onClick={()=>setMemberColors(old=>({...old,[activeReaderId]:color.value}))}>
+                      <span style={{backgroundColor:color.value}}/><small>{color.name}</small>
+                    </button>;
+                  })}
+                </div>
+              </div>
             </div>
             <div className="demo-settings-row"><div><h2>导出本地备份</h2>
               <p>把书签、导入文字、批注和设置保存为明文 JSON。请勿在公用设备存储敏感文字。</p></div>
@@ -1529,11 +1907,13 @@ export function DemoLibrary() {
               <button type="button" className="demo-reset-button" onClick={()=>{
                 if(!window.confirm("确定删除本地导入书籍、划线、手绘、批注和书签？无法恢复。"))return;
                 localStorage.removeItem(DEMO_STORAGE_KEY);
-                setBooks(seedBooks);setBookId("rain");setChapterIndex(0);
+                setBooks(seedBooks);setBookId("rain");setHasRecentBook(false);setChapterIndex(0);
                 setNight(false);setFontSize(19);setDoublePage(true);setSaved([]);
                 setProgress({});setPageProgress({});setPageOffset(0);setPageCount(1);
                 setStrokes([]);setMarkings([]);setSelection(null);
-                setNotes(initialNotes);setNoteDraft("");setOpenNoteId(null);
+                setNotes(initialNotes);setNoteDraft("");setOpenNoteId(null);setFocusedNoteIds([]);
+                setMemberColors(DEFAULT_MEMBER_COLORS);setActiveReaderId("self");setNoteVisibility("public");
+                setDrawingColor(DRAWING_COLORS[0]);
                 setNotice("已清除本地数据并恢复初始演示。");
               }}>清除本地数据</button>
             </div>
