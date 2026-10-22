@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect,useLayoutEffect,useRef,useState,type ChangeEvent,type CSSProperties,type FormEvent,type PointerEvent} from "react";
+import {useCallback,useEffect,useLayoutEffect,useRef,useState,type ChangeEvent,type CSSProperties,type FormEvent,type PointerEvent} from "react";
 import {decodeTxt,prepareTxt} from "@/lib/v2/txt";
 import {prepareEpub} from "@/lib/v2/epub";
 import {preparePdf} from "@/lib/v2/pdf";
@@ -35,7 +35,8 @@ type DemoNote = {
   author: "我" | "共读伙伴";
   replies?: {id:string;content:string}[];
 };
-type Stroke={id:string;bookId:string;chapterIndex:number;page?:number;points:{x:number;y:number}[]};
+type StrokeAnchor={paragraphIndex:number;start:number;end:number;quote:string;sourceBounds:{x:number;y:number;width:number;height:number}};
+type Stroke={id:string;bookId:string;chapterIndex:number;page?:number;points:{x:number;y:number}[];anchor?:StrokeAnchor};
 type TextRange={paragraphIndex:number;start:number;end:number};
 type Selection={quote:string;chapterIndex:number;ranges:TextRange[]};
 /** `quote` is retained for v1 local-storage compatibility. New markings use text ranges. */
@@ -61,6 +62,39 @@ function strokeDistance(points:{x:number;y:number}[],point:{x:number;y:number}){
     closest=Math.min(closest,Math.hypot(point.x-(start.x+dx*t),point.y-(start.y+dy*t)));
   }
   return closest;
+}
+function clampUnit(value:number){return Math.min(1,Math.max(0,value));}
+function rangeBoundary(container:HTMLElement,offset:number){
+  const walker=document.createTreeWalker(container,NodeFilter.SHOW_TEXT);
+  let node=walker.nextNode();
+  let remaining=Math.max(0,offset);
+  let last:Node|null=null;
+  while(node){
+    last=node;
+    const length=node.textContent?.length??0;
+    if(remaining<=length)return {node,offset:remaining};
+    remaining-=length;node=walker.nextNode();
+  }
+  return last?{node:last,offset:last.textContent?.length??0}:null;
+}
+function textRangeAtOffsets(container:HTMLElement,start:number,end:number){
+  const from=rangeBoundary(container,start),to=rangeBoundary(container,end);
+  if(!from||!to)return null;
+  const range=document.createRange();
+  range.setStart(from.node,from.offset);range.setEnd(to.node,to.offset);
+  return range;
+}
+function rectUnion(rects:DOMRect[]){
+  if(!rects.length)return null;
+  return {
+    left:Math.min(...rects.map(rect=>rect.left)),
+    top:Math.min(...rects.map(rect=>rect.top)),
+    right:Math.max(...rects.map(rect=>rect.right)),
+    bottom:Math.max(...rects.map(rect=>rect.bottom)),
+  };
+}
+function rectsOverlap(a:{left:number;top:number;right:number;bottom:number},b:{left:number;top:number;right:number;bottom:number}){
+  return a.right>b.left&&a.left<b.right&&a.bottom>b.top&&a.top<b.bottom;
 }
 function chapterSourceLength(chapter:Chapter){
   // Keep a stable source-space coordinate that does not depend on the current
@@ -251,6 +285,8 @@ export function DemoLibrary() {
   const [drawing,setDrawing] = useState(false);
   const [drawingTool,setDrawingTool] = useState<"pen"|"eraser">("pen");
   const [activeStroke,setActiveStroke] = useState<Stroke|null>(null);
+  const [resolvedInk,setResolvedInk] = useState<Record<string,{page:number;points:{x:number;y:number}[]}>>({});
+  const resolvedInkSignatureRef=useRef("");
   const [undoHistory,setUndoHistory] = useState<StrokeChange[]>([]);
   const [redoHistory,setRedoHistory] = useState<StrokeChange[]>([]);
   const [selection,setSelection] = useState<Selection|null>(null);
@@ -851,6 +887,115 @@ export function DemoLibrary() {
     return {x:Math.min(1,Math.max(0,(event.clientX-r.left)/r.width)),
       y:Math.min(1,Math.max(0,(event.clientY-r.top)/r.height))};
   }
+  function findStrokeAnchor(stroke:Stroke,layer:SVGSVGElement){
+    const prose=document.querySelector<HTMLElement>(".demo-prose");
+    const svgRect=layer.getBoundingClientRect();
+    if(!prose||svgRect.width<1||svgRect.height<1||!stroke.points.length)return undefined;
+    const strokeBounds={
+      left:svgRect.left+Math.min(...stroke.points.map(point=>point.x))*svgRect.width,
+      top:svgRect.top+Math.min(...stroke.points.map(point=>point.y))*svgRect.height,
+      right:svgRect.left+Math.max(...stroke.points.map(point=>point.x))*svgRect.width,
+      bottom:svgRect.top+Math.max(...stroke.points.map(point=>point.y))*svgRect.height,
+    };
+    let best:{paragraph:HTMLElement;start:number;end:number;rects:DOMRect[]}|undefined;
+    for(const paragraph of Array.from(prose.querySelectorAll<HTMLElement>("p[data-paragraph-index]"))){
+      const text=paragraph.textContent??"";
+      let runStart=-1,runRects:DOMRect[]=[],candidate:{start:number;end:number;rects:DOMRect[]}|undefined;
+      const commitRun=(end:number)=>{
+        if(runStart<0)return;
+        if(!candidate||end-runStart>candidate.end-candidate.start)
+          candidate={start:runStart,end,rects:runRects};
+        runStart=-1;runRects=[];
+      };
+      for(let index=0;index<text.length;index++){
+        const range=textRangeAtOffsets(paragraph,index,index+1);
+        const rect=Array.from(range?.getClientRects()??[]).find(item=>item.width>0&&item.height>0&&
+          rectsOverlap(item,strokeBounds));
+        if(rect){
+          if(runStart<0)runStart=index;
+          runRects.push(rect);
+        }else commitRun(index);
+      }
+      commitRun(text.length);
+      if(candidate&&(candidate.end-candidate.start)>=2&&
+        (!best||candidate.end-candidate.start>best.end-best.start))
+        best={paragraph,start:candidate.start,end:candidate.end,rects:candidate.rects};
+    }
+    if(!best)return undefined;
+    const paragraphText=best.paragraph.textContent??"";
+    let start=best.start,end=best.end;
+    while(start<end&&/\s/.test(paragraphText[start]??""))start++;
+    while(end>start&&/\s/.test(paragraphText[end-1]??""))end--;
+    const quote=paragraphText.slice(start,end);
+    if(quote.length<2||quote.length>240)return undefined;
+    const range=textRangeAtOffsets(best.paragraph,start,end);
+    const bounds=rectUnion(Array.from(range?.getClientRects()??[]).filter(rect=>rectsOverlap(rect,strokeBounds)));
+    if(!bounds||bounds.right-bounds.left<2||bounds.bottom-bounds.top<2)return undefined;
+    return {
+      paragraphIndex:Number(best.paragraph.dataset.paragraphIndex),start,end,quote,
+      sourceBounds:{
+        x:(bounds.left-svgRect.left)/svgRect.width,
+        y:(bounds.top-svgRect.top)/svgRect.height,
+        width:(bounds.right-bounds.left)/svgRect.width,
+        height:(bounds.bottom-bounds.top)/svgRect.height,
+      },
+    } satisfies StrokeAnchor;
+  }
+  const resolveStrokeForLayer=useCallback((stroke:Stroke,layer:SVGSVGElement)=>{
+    const anchor=stroke.anchor;
+    const prose=document.querySelector<HTMLElement>(".demo-prose");
+    const flowViewport=flowViewportRef.current;
+    const step=flowLayout.pageStep;
+    const page=Number(layer.dataset.page);
+    if(!anchor||!prose||!flowViewport||!Number.isInteger(page)||step<1)return undefined;
+    const paragraph=prose.querySelector<HTMLElement>("p[data-paragraph-index=\""+anchor.paragraphIndex+"\"]");
+    if(!paragraph||paragraph.textContent?.slice(anchor.start,anchor.end)!==anchor.quote)return undefined;
+    const range=textRangeAtOffsets(paragraph,anchor.start,anchor.end);
+    const viewportRect=flowViewport.getBoundingClientRect();
+    const layerRect=layer.getBoundingClientRect();
+    const rects=Array.from(range?.getClientRects()??[]).filter(rect=>rect.width>0&&rect.height>0);
+    const pageRects=rects.filter(rect=>{
+      const column=Math.floor((rect.left-viewportRect.left+pageOffset*step)/step);
+      return column===page&&rectsOverlap(rect,layerRect);
+    });
+    const bounds=rectUnion(pageRects);
+    if(!bounds)return undefined;
+    const source=anchor.sourceBounds;
+    const current={
+      x:(bounds.left-layerRect.left)/layerRect.width,
+      y:(bounds.top-layerRect.top)/layerRect.height,
+      width:(bounds.right-bounds.left)/layerRect.width,
+      height:(bounds.bottom-bounds.top)/layerRect.height,
+    };
+    if(source.width<0.0001||source.height<0.0001||current.width<0.0001||current.height<0.0001)return undefined;
+    return {
+      page,
+      points:stroke.points.map(point=>({
+        x:clampUnit(current.x+(point.x-source.x)/source.width*current.width),
+        y:clampUnit(current.y+(point.y-source.y)/source.height*current.height),
+      })),
+    };
+  },[flowLayout.pageStep,pageOffset]);
+  useLayoutEffect(()=>{
+    if(screen!=="reader"||!flowLayout.pageStep){
+      if(resolvedInkSignatureRef.current!==""){
+        resolvedInkSignatureRef.current="";setResolvedInk({});
+      }
+      return;
+    }
+    const next:Record<string,{page:number;points:{x:number;y:number}[]}>= {};
+    const layers=Array.from(document.querySelectorAll<SVGSVGElement>(".demo-ink-layer"));
+    for(const layer of layers){
+      for(const stroke of strokes.filter(item=>item.bookId===book.id&&item.chapterIndex===safeChapterIndex&&item.anchor)){
+        const resolved=resolveStrokeForLayer(stroke,layer);
+        if(resolved)next[stroke.id]=resolved;
+      }
+    }
+    const signature=JSON.stringify(next);
+    if(signature!==resolvedInkSignatureRef.current){
+      resolvedInkSignatureRef.current=signature;setResolvedInk(next);
+    }
+  },[screen,book.id,safeChapterIndex,pageOffset,pageCount,flowLayout,fontSize,visiblePages,strokes,resolveStrokeForLayer]);
   function recordStrokeChange(change:StrokeChange){
     if(!change.strokes.length)return;
     setUndoHistory(old=>[...old,change].slice(-80));
@@ -859,7 +1004,8 @@ export function DemoLibrary() {
   function eraseAt(point:{x:number;y:number},page:number){
     setStrokes(old=>{
       const erased=old.filter(stroke=>stroke.bookId===book.id&&stroke.chapterIndex===safeChapterIndex&&
-        (stroke.page??0)===page&&strokeDistance(stroke.points,point)<.026&&
+        (resolvedInk[stroke.id]?.page??stroke.page??0)===page&&
+        strokeDistance(resolvedInk[stroke.id]?.points??stroke.points,point)<.026&&
         !erasedStrokesRef.current.some(item=>item.id===stroke.id));
       if(!erased.length)return old;
       erasedStrokesRef.current=[...erasedStrokesRef.current,...erased];
@@ -897,8 +1043,11 @@ export function DemoLibrary() {
     drawingRef.current=null;
     setActiveStroke(null);
     if(finished&&finished.points.length>1){
-      setStrokes(old=>[...old.filter(Boolean).slice(-499),finished]);
-      recordStrokeChange({kind:"add",strokes:[finished]});
+      const layer=document.querySelector<SVGSVGElement>(".demo-ink-layer[data-page=\""+(finished.page??0)+"\"]");
+      const anchored=layer?findStrokeAnchor(finished,layer):undefined;
+      const persisted=anchored?{...finished,anchor:anchored}:finished;
+      setStrokes(old=>[...old.filter(Boolean).slice(-499),persisted]);
+      recordStrokeChange({kind:"add",strokes:[persisted]});
     }
     if(erasedStrokesRef.current.length){
       recordStrokeChange({kind:"remove",strokes:erasedStrokesRef.current});
@@ -930,7 +1079,7 @@ export function DemoLibrary() {
     endStroke();
     setStrokes(old=>{
       const removed=old.filter(stroke=>stroke.bookId===book.id&&stroke.chapterIndex===safeChapterIndex&&
-        (stroke.page??0)===pageOffset);
+        (resolvedInk[stroke.id]?.page??stroke.page??0)===pageOffset);
       if(!removed.length)return old;
       recordStrokeChange({kind:"remove",strokes:removed});
       const ids=new Set(removed.map(item=>item.id));
@@ -999,12 +1148,12 @@ export function DemoLibrary() {
       onPointerDown={e=>startStroke(e,safeChapterIndex,shownPage)}
       onPointerMove={moveStroke} onPointerUp={endStroke} onPointerCancel={endStroke}>
       {[...strokes.filter(t=>t&&t.bookId===book.id&&t.chapterIndex===safeChapterIndex&&
-          (t.page??0)===shownPage),
+          (resolvedInk[t.id]?.page??t.page??0)===shownPage),
         ...(activeStroke?.bookId===book.id&&activeStroke.chapterIndex===safeChapterIndex&&
           (activeStroke.page??0)===shownPage?[activeStroke]:[])].map(t=>
-        <polyline key={t.id} fill="none" stroke="#ac6550" strokeWidth=".65"
+        <polyline key={t.id} data-stroke-id={t.id} fill="none" stroke="#ac6550" strokeWidth=".65"
           strokeLinecap="round" strokeLinejoin="round"
-          points={t.points.map(p=>(p.x*100)+","+(p.y*100)).join(" ")}/>
+          points={(resolvedInk[t.id]?.points??t.points).map(p=>(p.x*100)+","+(p.y*100)).join(" ")}/>
       )}
     </svg>;
   }
